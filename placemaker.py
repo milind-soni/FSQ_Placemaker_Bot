@@ -266,7 +266,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 def main() -> None:
     """Start the bot."""
-    application = Application.builder().token("7706868941:AAFT8nKaPKvtGfYnHGZlf3PmVgLlLUMXnXk").build()
+    application = Application.builder().token("YourTokenHere").build()
     
     # Set up conversation handler
     conv_handler = ConversationHandler(
