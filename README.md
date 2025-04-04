@@ -40,7 +40,7 @@ This bot makes the process of adding and updating place data more accessible to 
 1. Clone this repository:
    ```bash
    git clone https://github.com/yourusername/foursquare-placemaker-bot.git
-   cd foursquare-placemaker-bot
+   cd FSQ_Placemaker_Bot
    ```
 
 2. Install the required dependencies:
