@@ -1,7 +1,7 @@
 # Foursquare Placemaker Telegram Bot 🗺️🤖
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Fused](https://img.shields.io/badge/Fused-udf-d1e550)]([https://core.telegram.org/bots/api](https://www.fused.io/))
+[![Fused](https://img.shields.io/badge/Fused-udf-d1e550)](https://www.fused.io/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-✓-blue.svg)](https://core.telegram.org/bots/api)
 
 
