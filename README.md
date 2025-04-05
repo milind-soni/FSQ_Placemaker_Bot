@@ -2,7 +2,7 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-✓-blue.svg)](https://core.telegram.org/bots/api)
-[![Fused](https://fused-magic.s3.us-west-2.amazonaws.com/docs_assets/ecosystem_diagram.png)]([https://www.python.org/downloads/](https://www.fused.io/))
+[![Fused](https://img.shields.io/badge/Telegram%20Bot%20API-✓-blue.svg)](https://core.telegram.org/bots/api)
 A Telegram bot for the Foursquare Placemaker community that enables users to contribute to the global places database directly from their mobile devices.
 
 ![Foursquare Placemaker Bot Banner](https://your-image-url-here.png)
