@@ -101,6 +101,13 @@ The bot implements a conversation flow with 10 states:
 9. PHOTOS: User uploads photos (optional)
 10. CONFIRM: User reviews and confirms the submission
 
+## 🔄 Mini-App
+
+The Mini App within the bot is served by [Fused](https://www.fused.io/):
+1. Foursquare Location Data [UDF](https://github.com/fusedio/udfs/tree/main/public/Foursquare_Open_Source_Places)
+
+
+
 ---
 
 <p align="center">Made with ❤️ for the Placemaker community</p>
