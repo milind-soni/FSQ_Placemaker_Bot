@@ -27,6 +27,13 @@ This bot makes the process of adding and updating place data more accessible to 
 - **Foursquare Map Integration**: Explore existing Foursquare location data through an embedded web app
 - **Conversational Interface**: User-friendly keyboard buttons and inline options
 
+## 🌆 Map Integration Web-App
+
+The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/):
+1. Foursquare Location Data [UDF](https://github.com/fusedio/udfs/tree/main/public/Foursquare_Open_Source_Places)
+
+
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -100,11 +107,6 @@ The bot implements a conversation flow with 10 states:
 8. ATTRIBUTES: User selects applicable attributes
 9. PHOTOS: User uploads photos (optional)
 10. CONFIRM: User reviews and confirms the submission
-
-## 🌆 Mini-App
-
-The Mini App within the bot is served by [Fused](https://www.fused.io/):
-1. Foursquare Location Data [UDF](https://github.com/fusedio/udfs/tree/main/public/Foursquare_Open_Source_Places)
 
 
 
