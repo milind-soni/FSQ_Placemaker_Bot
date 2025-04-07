@@ -127,6 +127,9 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# poc ritik dir
+poc/
+
 # Environments
 .env
 .venv
