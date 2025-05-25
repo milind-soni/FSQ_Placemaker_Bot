@@ -12,12 +12,14 @@ from telegram.ext import (
 from openai import OpenAI
 from pydantic import BaseModel, Field
 import os
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
 OPENAI_KEY = os.environ.get("OPENAI_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+FOURSQUARE_API_KEY = os.environ.get("FOURSQUARE_API_KEY")
 
 print(OPENAI_KEY, TELEGRAM_BOT_TOKEN)
 
@@ -31,8 +33,8 @@ class UserInputClassifier(BaseModel):
     explation: str = Field(description="The explanation for the response that you provide")
 
 # Conversation states
-(LOCATION, NAME, CATEGORY, ADDRESS, CONTACT, HOURS, CUSTOM_HOURS,
- ATTRIBUTES, CHAIN_STATUS, PHOTOS, CONFIRM) = range(11)
+(LOCATION, NAME, CATEGORY, ADDRESS, CONTACT, HOURS, CUSTOM_HOURS, ATTRIBUTES, 
+ CHAIN_STATUS, PHOTOS, CONFIRM, FILTER_CHOICE, FILTER_VALUE) = range(13)
 
 # Enable logging
 logging.basicConfig(
@@ -163,10 +165,214 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return LOCATION
 
+
+
+# async def search_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+#     return await filter_choice(update, context)
+
+
+async def filter_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Construct a keyboard with possible filters
+    filter_buttons = [
+        ["Set Keyword"], 
+        ["Set Category"], 
+        ["Open Now"],
+        ["Set Price Range"], 
+        ["Set Radius"],
+        ["Done ✅"]
+    ]
+    reply_markup = ReplyKeyboardMarkup(filter_buttons, resize_keyboard=True)
+
+    # Summarize what’s chosen so far:
+    chosen_params = context.user_data.get("search_params", {})
+    lines = []
+    for k, v in chosen_params.items():
+        lines.append(f"{k}: {v}")
+    summary = "\n".join(lines) if lines else "No filters set yet."
+
+    await update.message.reply_text(
+        f"Current filters:\n{summary}\n\n"
+        "Select a filter to set/change, or tap 'Done ✅' to search.",
+        reply_markup=reply_markup
+    )
+    return FILTER_CHOICE
+
+
+async def filter_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_text = update.message.text.strip().lower()
+
+    if user_text == "done ✅":
+        # User is done picking filters
+        return await do_foursquare_search(update, context)
+
+    # Identify which filter they chose
+    if "keyword" in user_text:
+        context.user_data["current_filter"] = "query"  # or "keyword"
+        await update.message.reply_text(
+            "Please enter your search keyword (e.g. 'coffee', 'pizza', 'pharmacy').",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return FILTER_VALUE
+    
+    elif "category" in user_text:
+        context.user_data["current_filter"] = "fsq_category_ids"
+        await update.message.reply_text(
+            "Enter a Foursquare Category ID or a comma-separated list.\n"
+            "(If you don't know them, type 'skip'.)",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return FILTER_VALUE
+
+    elif "open now" in user_text:
+        # We won't ask for a value, we’ll just set open_now = true
+        context.user_data["search_params"]["open_now"] = "true"
+        await update.message.reply_text(
+            "Okay, we'll filter only places that are currently open."
+        )
+        # go back to filter choice
+        return await filter_choice(update, context)
+
+    elif "price" in user_text:
+        context.user_data["current_filter"] = "price_range"
+        await update.message.reply_text(
+            "Enter min and max price (1-4). Example: '1,2' or just '2'.\nHere 1 being the most affordable and 4 being the most expensive",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return FILTER_VALUE
+
+    elif "radius" in user_text:
+        context.user_data["current_filter"] = "radius"
+        await update.message.reply_text(
+            "Enter the radius in meters (max 100000).",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return FILTER_VALUE
+
+    else:
+        await update.message.reply_text("Please select a valid option.")
+        return FILTER_CHOICE
+
+async def filter_value_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    current_filter = context.user_data.get("current_filter", "")
+    value = update.message.text.strip()
+
+    # If user typed 'skip' for categories, etc.
+    if value.lower() == "skip":
+        await update.message.reply_text("Filter skipped.")
+        return await filter_choice(update, context)
+
+    if current_filter == "query":
+        # Just store the user text
+        context.user_data["search_params"]["query"] = value
+
+    elif current_filter == "fsq_category_ids":
+        # Could validate if you like, but we’ll just store it
+        context.user_data["search_params"]["fsq_category_ids"] = value
+
+    elif current_filter == "price_range":
+        # Might parse "min,max" from user input
+        # e.g. "1,2" => min_price=1, max_price=2
+        tokens = [x.strip() for x in value.split(",")]
+        if len(tokens) == 1:
+            # user gave a single number => set both min_price and max_price
+            price = tokens[0]
+            context.user_data["search_params"]["min_price"] = price
+            context.user_data["search_params"]["max_price"] = price
+        else:
+            # user gave two
+            context.user_data["search_params"]["min_price"] = tokens[0]
+            context.user_data["search_params"]["max_price"] = tokens[1]
+
+    elif current_filter == "radius":
+        context.user_data["search_params"]["radius"] = value
+    
+    else:
+        await update.message.reply_text("No valid filter is currently selected.")
+        return FILTER_CHOICE
+
+    await update.message.reply_text("Filter set!")
+    # Return to filter choice so they can pick another filter or done
+    return await filter_choice(update, context)
+
+
+async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    search_params = context.user_data.get("search_params", {})
+    lat = context.user_data['location']['latitude']
+    lng = context.user_data['location']['longitude']
+
+    base_url = "https://places-api.foursquare.com/places/search"
+
+    # Construct a dict of API query parameters
+    params = {
+        "ll": f"{lat},{lng}",
+        "limit": 5,
+    }
+    # Merge in the user’s chosen params
+    # e.g. query, fsq_category_ids, min_price, max_price, radius, open_now...
+    for k, v in search_params.items():
+        # if key is 'query', we do params['query'] = ...
+        # if key is 'open_now', we do params['open_now'] = ...
+        # etc.
+        if k == "query":
+            params["query"] = v
+        elif k == "fsq_category_ids":
+            params["fsq_category_ids"] = v
+        elif k == "min_price":
+            params["min_price"] = v
+        elif k == "max_price":
+            params["max_price"] = v
+        elif k == "radius":
+            params["radius"] = v
+        elif k == "open_now":
+            params["open_now"] = "true"
+    
+    headers = {
+        "accept": "application/json",
+        "X-Places-Api-Version": "2025-02-05",
+        "Authorization": f"Bearer {FOURSQUARE_API_KEY}"
+    }
+
+    try:
+        resp = requests.get(base_url, params=params, headers=headers)
+        data = resp.json()
+        results = data.get("results", [])
+        if not results:
+            await update.message.reply_text("No places found with your filters.")
+
+            await update.message.reply_text(
+                "Type /start to start again!",
+                reply_markup=ReplyKeyboardRemove()
+            )
+        else:
+            # Build a small summary
+            lines = []
+            for place in results:
+                name = place.get("name", "Unknown")
+                dist = place.get("distance", "N/A")
+                lines.append(f"{name} - {dist}m away")
+            
+            reply = "Here are some places:\n\n" + "\n".join(lines)
+            await update.message.reply_text(reply)
+
+            await update.message.reply_text(
+                "Type /start to start again!",
+                reply_markup=ReplyKeyboardRemove()
+            )
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
+    # End the conversation or ask if they want to refine
+    return ConversationHandler.END
+
+
+
+
+
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the location and then show the 2 options:
-    1. Add a new place
-    2. Explore the 4Sq data on map
+    1. Search 4SQ data
+    2. Add a new place
+    3. Explore the 4Sq data on map
     """
     user_location = update.message.location
     context.user_data['location'] = {
@@ -176,6 +382,7 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Show two options in a new keyboard
     keyboard = [
+        [KeyboardButton("Search Foursquare data")],
         [KeyboardButton("Add a new place")],
         [KeyboardButton(
             text="Explore the foursquare location data",
@@ -190,8 +397,9 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(
         "Location received!\n"
         "What would you like to do next?\n\n"
-        "1. Add a new place\n"
-        "2. Explore the Foursquare Data on the Map",
+        "1. Search Foursquare data\n"
+        "2. Add a new place\n"
+        "3. Explore the Foursquare Data on the Map",
         reply_markup=reply_markup
     )
 
@@ -210,6 +418,13 @@ async def location_choice_handler(update: Update, context: ContextTypes.DEFAULT_
             reply_markup=ReplyKeyboardRemove()
         )
         return NAME
+    elif "search foursquare data" in user_text:
+        # Start the Search with params
+        context.user_data["search_params"] = {}
+        await update.message.reply_text(
+            "Let's do a Foursquare place search! We can add filters step by step."
+        )
+        return await filter_choice(update, context)
     else:
         # error handling part here
         await update.message.reply_text(
@@ -509,7 +724,10 @@ def main() -> None:
                 CommandHandler("skip", photos_handler),
                 CommandHandler("done", photos_handler)
             ],
-            CONFIRM: [CallbackQueryHandler(handle_confirmation)]
+            CONFIRM: [CallbackQueryHandler(handle_confirmation)],
+            # SEARCH_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_start)],
+            FILTER_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, filter_choice_handler)],
+            FILTER_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, filter_value_handler)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
