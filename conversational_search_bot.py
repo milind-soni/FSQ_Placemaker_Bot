@@ -35,12 +35,11 @@ logger = logging.getLogger(__name__)
 class FoursquareSearchParams(BaseModel):
     query: str = Field(description="The core search keyword, e.g. 'burger', 'pizza', etc.")
     open_now: bool = Field(default=None, description="Whether to filter for places open now")
-    min_rating: float = Field(default=None, description="Minimum rating (if specified)")
-    max_rating: float = Field(default=None, description="Maximum rating (if specified)")
     radius: int = Field(default=None, description="Radius in meters (if specified)")
     limit: int = Field(default=None, description="Number of results to return")
     fsq_category_ids: str = Field(default=None, description="Foursquare category IDs, comma-separated if multiple")
-    price: str = Field(default=None, description="Price range, e.g. '1,2' or '2'")
+    min_price: int = Field(default=None, description="Minimum price (1=most affordable, 4=most expensive)")
+    max_price: int = Field(default=None, description="Maximum price (1=most affordable, 4=most expensive)")
     search_now: bool = Field(default=False, description="True if the user wants to trigger the search now, otherwise False.")
     explanation: str = Field(description="Explanation of how the query was parsed")
 
@@ -51,7 +50,8 @@ async def parse_search_query_gpt(user_input: str, current_params: dict = None) -
         You are a helpful assistant. The user is searching for places using natural language. 
         Your job is to extract only the core search keyword (e.g., 'burger' from 'I'm looking for a great burger joint near me!').
         Do not include words like 'place', 'joint', 'restaurant', 'shop', etc. Only the essential food or place type.
-        Also, parse any additional filters the user provides (open now, rating, radius, price, etc). If a field is not mentioned, leave it as null.
+        Also, parse any additional filters the user provides (open now, radius, min_price, max_price, etc). If a field is not mentioned, leave it as null.
+        min_price and max_price are integers from 1 (most affordable) to 4 (most expensive).
         Here are the current search parameters (if any):
         {json.dumps(current_params)}
         Merge any new information from the user with these existing parameters. If the user provides a new value for a field, overwrite the old one.
@@ -78,10 +78,10 @@ async def suggest_next_filters(params: dict) -> str:
         missing.append("distance")
     if not params.get("open_now"):
         missing.append("open now")
-    if not params.get("price"):
-        missing.append("price range")
-    if not params.get("min_rating"):
-        missing.append("minimum rating")
+    if not params.get("min_price"):
+        missing.append("minimum price")
+    if not params.get("max_price"):
+        missing.append("maximum price")
     # Add more suggestions as needed
     if not missing:
         return "You can add more preferences, or just ask me to search now!"
@@ -152,10 +152,10 @@ async def gpt_suggest_refine_prompt(params: dict) -> str:
         missing.append("distance")
     if not params.get("open_now"):
         missing.append("open now")
-    if not params.get("price"):
-        missing.append("price range")
-    if not params.get("min_rating"):
-        missing.append("minimum rating")
+    if not params.get("min_price"):
+        missing.append("minimum price")
+    if not params.get("max_price"):
+        missing.append("maximum price")
     # Add more suggestions as needed
     user_context = []
     for k, v in params.items():
@@ -165,6 +165,31 @@ async def gpt_suggest_refine_prompt(params: dict) -> str:
         You are a friendly assistant helping a user search for places. The user has already set these filters: {', '.join(user_context) if user_context else 'none yet'}.
         The following filters are still missing: {', '.join(missing)}.
         In a natural, conversational way, suggest to the user that they can add any of these missing filters to narrow down the results, or say 'no' to finish. Do not use a robotic or templated tone. Make it sound like a real human would ask in a chat. Keep it short and friendly. Don't use any emojis.
+    """
+    completion = client.chat.completions.create(
+        model="gpt-4o",
+        temperature=1,
+        messages=[
+            {"role": "system", "content": "You are a helpful, friendly assistant."},
+            {"role": "user", "content": gpt_prompt},
+        ]
+    )
+    return completion.choices[0].message.content.strip()
+
+async def gpt_generate_results_header(params: dict) -> str:
+    """Use GPT to generate a dynamic, conversational header for search results based on the query and filters."""
+    query = params.get("query", None)
+    user_context = []
+    for k, v in params.items():
+        if v is not None and v != "" and k != "query":
+            user_context.append(f"{k}: {v}")
+    gpt_prompt = f"""
+        You are a friendly assistant helping a user search for places. The user is about to see a list of results for their search. 
+        The main search keyword is: {query if query else 'unknown'}.
+        The user has set these filters: {', '.join(user_context) if user_context else 'none'}.
+        Write a single, catchy, human-like one-liner to introduce the results. 
+        Make it specific to the query if possible (e.g., 'Here are some top burger spots you might want to check out', 'Let your pizza journey begin—these delicious destinations await', 'Looking for the best coffee in town? Start with these places').
+        If the query is missing, use a generic but still friendly intro. Do not use emojis. Keep it short and engaging.
     """
     completion = client.chat.completions.create(
         model="gpt-4o",
@@ -189,14 +214,18 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
         params["query"] = search_params["query"]
     if search_params.get("limit"):
         params["limit"] = search_params["limit"]
+    else:
+        params["limit"] = 5
     if search_params.get("open_now"):
         params["open_now"] = "true"
     if search_params.get("radius"):
         params["radius"] = search_params["radius"]
     if search_params.get("fsq_category_ids"):
         params["fsq_category_ids"] = search_params["fsq_category_ids"]
-    if search_params.get("price"):
-        params["price"] = search_params["price"]
+    if search_params.get("min_price"):
+        params["min_price"] = search_params["min_price"]
+    if search_params.get("max_price"):
+        params["max_price"] = search_params["max_price"]
     headers = {
         "accept": "application/json",
         "X-Places-Api-Version": "2025-02-05",
@@ -217,6 +246,8 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("No places found with your filters. Type a new query or /start to try again.")
             return QUERY
         else:
+            # Generate a dynamic, conversational header for the results
+            header = await gpt_generate_results_header(search_params)
             lines = []
             for place in results:
                 name = place.get("name", "Unknown")
@@ -254,7 +285,7 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                     f"Distance: {dist}m away"
                 )
                 lines.append(place_msg)
-            reply = "Here are some places:\n\n" + "\n\n".join(lines)
+            reply = header + "\n\n" + "\n\n".join(lines)
             await update.message.reply_text(reply, parse_mode="HTML")
             if ask_refine:
                 refine_prompt = await gpt_suggest_refine_prompt(search_params)
