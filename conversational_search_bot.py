@@ -1,7 +1,7 @@
 import json
 import logging
 from telegram import (
-    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, InlineKeyboardButton, InlineKeyboardMarkup
 )
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, MessageHandler, 
@@ -13,6 +13,7 @@ import os
 import requests
 from dotenv import load_dotenv
 import re
+import base64
 
 load_dotenv()
 
@@ -242,6 +243,38 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
         pprint(data)
         print("="*50)
         results = data.get("results", [])
+
+        # --- Fetch images for each place ---
+        photo_headers = {
+            "accept": "application/json",
+            "Authorization": f"Bearer {FOURSQUARE_API_KEY}",
+        }
+        for place in results:
+            fsq_id = place.get("fsq_place_id")
+            if not fsq_id:
+                place["image_url"] = None
+                continue
+            photo_url = f"https://api.foursquare.com/v3/places/{fsq_id}/photos?limit=5"
+            try:
+                photo_resp = requests.get(photo_url, headers=photo_headers)
+                photo_data = photo_resp.json()
+                if isinstance(photo_data, list) and len(photo_data) > 0:
+                    photo = photo_data[0]
+                    prefix = photo.get("prefix", "")
+                    suffix = photo.get("suffix", "")
+                    width = photo.get("width", 300)
+                    height = photo.get("height", 225)
+                    # Target size
+                    target_w = 300
+                    target_h = int((target_w / width) * height) if width and height else 225
+                    image_url = f"{prefix}{target_w}x{target_h}{suffix}"
+                    place["image_url"] = image_url
+                else:
+                    place["image_url"] = None
+            except Exception as e:
+                place["image_url"] = None
+        # --- End fetch images ---
+
         if not results:
             await update.message.reply_text("No places found with your filters. Type a new query or /start to try again.")
             return QUERY
@@ -287,6 +320,20 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                 lines.append(place_msg)
             reply = header + "\n\n" + "\n\n".join(lines)
             await update.message.reply_text(reply, parse_mode="HTML")
+
+            # --- Add Open List View Button ---
+            # Serialize and encode the results (now with image_url)
+            places_json = json.dumps(results)
+            places_b64 = base64.urlsafe_b64encode(places_json.encode()).decode()
+            webapp_url = f"http://192.168.1.44:8000/?data={places_b64}"
+            keyboard = [[InlineKeyboardButton("Open List View", url=webapp_url)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "Want to see these results in a beautiful list view? Tap below!",
+                reply_markup=reply_markup
+            )
+            # --- End Open List View Button ---
+
             if ask_refine:
                 refine_prompt = await gpt_suggest_refine_prompt(search_params)
                 await update.message.reply_text(refine_prompt)
