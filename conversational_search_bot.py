@@ -7,6 +7,7 @@ from telegram.ext import (
     Application, CommandHandler, ContextTypes, MessageHandler, 
     filters, ConversationHandler
 )
+from telegram.constants import ChatAction
 from openai import OpenAI
 from pydantic import BaseModel, Field
 import os
@@ -133,6 +134,10 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_query = update.message.text.strip()
+    
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    
     current_params = context.user_data.get('search_params', {})
     gpt_result = await parse_search_query_gpt(user_query, current_params)
     # Merge/overwrite params
@@ -203,6 +208,9 @@ async def gpt_generate_results_header(params: dict) -> str:
     return completion.choices[0].message.content.strip()
 
 async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYPE, ask_refine=False) -> int:
+    # Show typing indicator while searching
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    
     search_params = context.user_data.get("search_params", {})
     lat = context.user_data['location']['latitude']
     lng = context.user_data['location']['longitude']
@@ -245,6 +253,9 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
         results = data.get("results", [])
 
         # --- Fetch images for each place ---
+        # Show typing indicator while fetching images
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        
         photo_headers = {
             "accept": "application/json",
             "Authorization": f"Bearer {FOURSQUARE_API_KEY}",
@@ -279,6 +290,9 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("No places found with your filters. Type a new query or /start to try again.")
             return QUERY
         else:
+            # Show typing indicator while generating results header
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+            
             # Generate a dynamic, conversational header for the results
             header = await gpt_generate_results_header(search_params)
             lines = []
@@ -335,6 +349,9 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
             # --- End Open List View Button ---
 
             if ask_refine:
+                # Show typing indicator while generating refine prompt
+                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+                
                 refine_prompt = await gpt_suggest_refine_prompt(search_params)
                 await update.message.reply_text(refine_prompt)
                 return REFINE
@@ -367,6 +384,10 @@ async def gpt_refine_intent(user_message: str) -> bool:
 
 async def refine_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_text = update.message.text.strip()
+    
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    
     if await gpt_refine_intent(user_text):
         await update.message.reply_text("Okay! If you want to start a new search, just type your query or /start.")
         return ConversationHandler.END
