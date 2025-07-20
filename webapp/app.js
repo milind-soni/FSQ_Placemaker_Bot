@@ -1,3 +1,11 @@
+let allPlaces = [];
+let filteredPlaces = [];
+let filters = {
+    openNow: false,
+    topRated: false,
+    price: 'all'
+};
+
 function getQueryParam(name) {
     const url = new URL(window.location.href);
     return url.searchParams.get(name);
@@ -12,10 +20,69 @@ function decodeData(data) {
     }
 }
 
+function applyFilters() {
+    filteredPlaces = allPlaces.filter(place => {
+        // Open Now filter
+        if (filters.openNow) {
+            const openNow = place.hours && place.hours.open_now;
+            if (!openNow) return false;
+        }
+        
+        // Top Rated filter (8+ stars)
+        if (filters.topRated) {
+            const rating = place.rating;
+            if (!rating || rating < 8) return false;
+        }
+        
+        // Price filter
+        if (filters.price !== 'all') {
+            const targetPrice = parseInt(filters.price);
+            if (place.price !== targetPrice) return false;
+        }
+        
+        return true;
+    });
+    
+    renderList(filteredPlaces);
+}
+
+function togglePill(pillId, filterKey) {
+    const pill = document.getElementById(pillId);
+    const isActive = pill.classList.contains('active');
+    
+    if (isActive) {
+        pill.classList.remove('active');
+        filters[filterKey] = false;
+    } else {
+        pill.classList.add('active');
+        filters[filterKey] = true;
+    }
+    
+    applyFilters();
+}
+
+function setupFilters() {
+    // Price dropdown
+    document.getElementById('priceFilter').addEventListener('change', function() {
+        filters.price = this.value;
+        applyFilters();
+    });
+    
+    // Open Now toggle pill
+    document.getElementById('openNowPill').addEventListener('click', function() {
+        togglePill('openNowPill', 'openNow');
+    });
+    
+    // Top Rated toggle pill
+    document.getElementById('topRatedPill').addEventListener('click', function() {
+        togglePill('topRatedPill', 'topRated');
+    });
+}
+
 function renderList(places) {
     const container = document.getElementById('list-container');
     if (!places.length) {
-        container.innerHTML = '<div style="text-align:center; color:#aaa;">No places to display.</div>';
+        container.innerHTML = '<div style="text-align:center; color:#aaa; margin-top: 2rem;">No places match your filters.</div>';
         return;
     }
     container.innerHTML = '';
@@ -55,6 +122,8 @@ window.onload = function() {
         renderList([]);
         return;
     }
-    const places = decodeData(dataParam);
-    renderList(places);
+    allPlaces = decodeData(dataParam);
+    filteredPlaces = [...allPlaces];
+    setupFilters();
+    renderList(filteredPlaces);
 }; 

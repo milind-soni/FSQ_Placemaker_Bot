@@ -11,10 +11,79 @@ body {
     text-align: center;
     border-bottom: 1px solid #333;
 }
-.header h2 {
-    color: #6cb3fa;
-    margin: 0;
-    font-size: 2rem;
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    justify-content: center;
+    align-items: center;
+    max-width: 600px;
+    margin: 0 auto;
+}
+.pill-filter {
+    background: #404040;
+    border-radius: 25px;
+    padding: 0.7rem 1.2rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: #f0f0f0;
+    position: relative;
+    border: 2px solid transparent;
+    min-height: 20px;
+}
+.pill-filter:hover {
+    background: #4a4a4a;
+}
+.dropdown-pill {
+    position: relative;
+}
+.pill-select {
+    background: transparent;
+    border: none;
+    color: #f0f0f0;
+    font-size: 0.9rem;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    padding-right: 1.5rem;
+}
+.pill-select option {
+    background: #2d2d2d;
+    color: #f0f0f0;
+}
+.dropdown-arrow {
+    position: absolute;
+    right: 1rem;
+    font-size: 0.7rem;
+    color: #ccc;
+    pointer-events: none;
+}
+.toggle-pill {
+    user-select: none;
+}
+.toggle-pill.active {
+    background: #6cb3fa;
+    border-color: #6cb3fa;
+}
+.toggle-pill.active .checkmark {
+    opacity: 1;
+}
+.pill-text {
+    flex: 1;
+}
+.checkmark {
+    font-size: 0.8rem;
+    font-weight: bold;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    color: #fff;
+}
+.toggle-pill.active .checkmark {
+    opacity: 1;
 }
 #list-container {
     max-width: 600px;

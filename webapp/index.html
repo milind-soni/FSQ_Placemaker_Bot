@@ -8,7 +8,31 @@
 </head>
 <body>
     <div class="header">
-        <h2>Places List View</h2>
+        <div class="filters">
+            <!-- Price Range Dropdown Pill -->
+            <div class="pill-filter dropdown-pill">
+                <select id="priceFilter" class="pill-select">
+                    <option value="all">Price range</option>
+                    <option value="1">$</option>
+                    <option value="2">$$</option>
+                    <option value="3">$$$</option>
+                    <option value="4">$$$$</option>
+                </select>
+                <span class="dropdown-arrow">▼</span>
+            </div>
+            
+            <!-- Open Now Toggle Pill -->
+            <div class="pill-filter toggle-pill" id="openNowPill">
+                <span class="pill-text">Open now</span>
+                <span class="checkmark">✓</span>
+            </div>
+            
+            <!-- Top Rated Toggle Pill -->
+            <div class="pill-filter toggle-pill" id="topRatedPill">
+                <span class="pill-text">Top rated</span>
+                <span class="checkmark">✓</span>
+            </div>
+        </div>
     </div>
     <div id="list-container"></div>
     <script src="app.js"></script>
