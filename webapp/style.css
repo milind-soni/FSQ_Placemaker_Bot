@@ -13,14 +13,28 @@ body {
 }
 .filters {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap; /* Prevent wrapping */
     gap: 0.8rem;
-    justify-content: center;
+    justify-content: flex-start; /* Align items to the start */
     align-items: center;
-    max-width: 600px;
+    max-width: 100%; /* Allow full width for scrolling */
     margin: 0 auto;
+    overflow-x: auto; /* Enable horizontal scrolling */
+    padding: 0 1rem; /* Add some padding on sides for better scroll experience */
+    -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
 }
+
+/* Hide scrollbar for a cleaner look, but keep functionality */
+.filters::-webkit-scrollbar {
+    display: none;
+}
+.filters {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
+
 .pill-filter {
+    flex-shrink: 0; /* Prevent pills from shrinking */
     background: #404040;
     border-radius: 25px;
     padding: 0.7rem 1.2rem;
