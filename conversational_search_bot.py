@@ -1,7 +1,7 @@
 import json
 import logging
 from telegram import (
-    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, InlineKeyboardButton, InlineKeyboardMarkup
+    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 )
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, MessageHandler, 
@@ -25,7 +25,7 @@ FOURSQUARE_API_KEY = os.environ.get("FOURSQUARE_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
 
 # Conversation states
-(LOCATION, QUERY, REFINE) = range(3)
+(LOCATION, LOCATION_CHOICE, QUERY, REFINE) = range(4)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -126,11 +126,27 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         'longitude': user_location.longitude
     }
     context.user_data['search_params'] = {}
+    
+    # Show menu with webapp option
+    keyboard = [
+        [KeyboardButton("Search Foursquare data")],
+        [KeyboardButton(
+            text="Explore the foursquare location data",
+            web_app=WebAppInfo(
+                url="https://staging.fused.io/server/v1/realtime-shared/fsh_4a9CSIwYe2QZeDbsmExyIJ/run/file?dtype_out_raster=png&dtype_out_vector=csv"
+            )
+        )]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    
     await update.message.reply_text(
-        "Great! What are you looking for? (e.g. 'I'm craving sushi', 'Find a burger', etc.)",
-        reply_markup=ReplyKeyboardRemove()
+        "Location received!\n"
+        "What would you like to do?\n\n"
+        "1. Search Foursquare data\n"
+        "2. Explore the Foursquare Data on the Map",
+        reply_markup=reply_markup
     )
-    return QUERY
+    return LOCATION_CHOICE
 
 async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_query = update.message.text.strip()
@@ -395,12 +411,30 @@ async def refine_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Treat any other input as a new filter
         return await query_handler(update, context)
 
+async def location_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the user's choice after location is shared."""
+    user_text = update.message.text.strip().lower()
+    
+    if "search foursquare data" in user_text:
+        await update.message.reply_text(
+            "Great! What are you looking for? (e.g. 'I'm craving sushi', 'Find a burger', etc.)",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return QUERY
+    else:
+        # Handle other cases or invalid input
+        await update.message.reply_text(
+            "Please select a valid option from the menu."
+        )
+        return LOCATION_CHOICE
+
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             LOCATION: [MessageHandler(filters.LOCATION, location_handler)],
+            LOCATION_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, location_choice_handler)],
             QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, query_handler)],
             REFINE: [MessageHandler(filters.TEXT & ~filters.COMMAND, refine_handler)],
         },
