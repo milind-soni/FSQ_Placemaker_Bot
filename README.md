@@ -116,3 +116,12 @@ The bot implements a conversation flow with 10 states:
 ---
 
 <p align="center">Made with ❤️ for the Placemaker community</p>
+
+
+> Local Dev:
+
+```bash
+python3 -m http.server 8000 --bind 0.0.0.0
+
+python conversational_search_bot.py
+``` 
