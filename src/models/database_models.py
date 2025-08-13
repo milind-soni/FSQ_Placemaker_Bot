@@ -77,8 +77,8 @@ class ConversationMessage(Base):
     content = Column(Text, nullable=False)
     agent_name = Column(String(50), nullable=True)  # Which agent handled this message
     
-    # Metadata
-    metadata = Column(JSON, nullable=True)
+    # Message metadata
+    message_metadata = Column(JSON, nullable=True)
     
     # Relationships
     conversation = relationship("Conversation", back_populates="messages")

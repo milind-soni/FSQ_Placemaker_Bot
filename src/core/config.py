@@ -7,7 +7,9 @@ import os
 from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from enum import Enum
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class Environment(str, Enum):
     DEVELOPMENT = "development"
@@ -108,10 +110,13 @@ class Settings(BaseModel):
 def get_settings() -> Settings:
     """Get application settings from environment variables."""
     
+    environment = Environment(os.getenv("ENVIRONMENT", "development").lower())
+    debug = os.getenv("DEBUG", "false").lower() == "true"
+    
     # Database configuration
     database_url = os.getenv(
         "DATABASE_URL", 
-        "postgresql://user:password@localhost:5432/placemaker_db"
+        "postgresql+asyncpg://placemaker:placemaker123@localhost:5432/placemaker_db"
     )
     
     # Redis configuration
@@ -132,10 +137,6 @@ def get_settings() -> Settings:
     
     # Security
     secret_key = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
-    
-    # Server settings
-    environment = Environment(os.getenv("ENVIRONMENT", "development").lower())
-    debug = os.getenv("DEBUG", "false").lower() == "true"
     
     return Settings(
         environment=environment,
