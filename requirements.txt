@@ -1,4 +1,55 @@
-openai==1.70.0
-python-telegram-bot==22.0
-python-dotenv==1.1.0
-requests==2.32.3
+# Core framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6
+
+# Async and HTTP
+httpx==0.25.2
+asyncio-mqtt==0.13.0
+
+# Database
+sqlalchemy[asyncio]==2.0.23
+alembic==1.12.1
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
+
+# Caching
+redis==5.0.1
+hiredis==2.2.3
+
+# AI and APIs
+openai==1.3.7
+python-telegram-bot==20.7
+
+# Configuration and environment
+python-dotenv==1.0.0
+
+# Logging and monitoring
+structlog==23.2.0
+
+# Utilities
+python-json-logger==2.0.7
+uuid==1.30
+base64==0.1.0
+
+# Development and testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.1
+
+# Security
+cryptography==41.0.7
+python-jose[cryptography]==3.3.0
+
+# Image processing (for place photos)
+pillow==10.1.0
+
+# Background tasks
+celery[redis]==5.3.4
+
+# Monitoring and observability
+prometheus-client==0.19.0
