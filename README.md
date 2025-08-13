@@ -1,89 +1,221 @@
-# Foursquare Placemaker Telegram Bot 🗺️🤖
+# 🤖 PlacePilot: Your Location Companion
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Fused](https://img.shields.io/badge/Fused-udf-d1e550)](https://www.fused.io/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-✓-blue.svg)](https://core.telegram.org/bots/api)
 
+PlacePilot is an intelligent Telegram bot that transforms how users interact with location data through natural language conversations. Built using agentic AI architecture, our bot serves as a comprehensive location assistant that can search, recommend, and help users contribute to the Foursquare database—all through simple chat interactions.
 
+## 🏗️ Architecture
 
-A Telegram bot for the Foursquare Placemaker community that enables users to contribute to the global places database directly from their mobile devices.
+PlacePilot uses a modern, production-ready architecture:
 
-![Foursquare Placemaker Bot Banner](https://your-image-url-here.png)
+- **Agentic AI System**: Supervisor agent coordinates specialized agents for different tasks
+- **Async-First**: Built with FastAPI and async/await patterns for high performance
+- **Microservices Ready**: Clean separation between agents, services, and integrations
+- **Production-Grade**: Structured logging, health checks, error handling, and monitoring
 
-## 🌟 About Foursquare Placemakers
+### 🌟 Core Components
 
-> "Placemakers are the dedicated, passionate members of our global open source community who contribute to our shared understanding of places around the world. Welcome to our community of builders, developers, and local experts who help others unlock the best experiences, anywhere in the world."
+```
+src/
+├── agents/          # Agentic AI system
+├── core/           # Configuration, database, logging
+├── integrations/   # External API clients
+├── models/         # Data models and schemas
+├── services/       # Business logic
+├── utils/          # Utility functions
+└── webapp/         # Web interface
+```
 
-This bot makes the process of adding and updating place data more accessible to the Placemaker community, allowing contributions from anywhere using Telegram.
+## 🚀 Features
 
-## 🌆 Map Integration Web-App
+### 🔍 Interactive Location Discovery
+- **Visual Map Integration**: Explore Foursquare's 100M+ POIs through interactive maps
+- **Natural Language Search**: "Show me coffee shops near Times Square"
+- **Real-time Data**: Access to Foursquare's comprehensive database
 
-The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/):
-1. Foursquare Location Data [UDF](https://github.com/fusedio/udfs/tree/main/public/Foursquare_Open_Source_Places)
+### 🧠 Smart Place Recommendations  
+- **Conversational Queries**: "I'm craving pizza in downtown, what are my options?"
+- **Rich Responses**: Photos, ratings, contact details, operating hours
+- **Context-Aware**: AI understands preferences and location context
 
-## ✨ Features
+### 📝 Crowd-Sourced Data Enhancement
+- **Community Contributions**: Add new places through simple chat
+- **AI-Assisted Entry**: Natural language processing eliminates complex forms
+- **Quality Assurance**: Built-in validation ensures data accuracy
 
-- **Location-Based Entry**: Start by sharing your current location to add nearby places
-- **Guided Place Submission**: Step-by-step process for complete place information
-- **Category Selection**: Choose from common place categories or enter custom ones
-- **Rich Place Attributes**: Add detailed information including:
-  - Contact information (phone, website, email)
-  - Operating hours
-  - Chain status
-  - Amenities (WiFi, parking, outdoor seating, etc.)
-- **Photo Uploads**: Submit up to 3 photos of the place (storefront, interior, features)
-- **Foursquare Map Integration**: Explore existing Foursquare location data through an embedded web app
-- **Conversational Interface**: User-friendly keyboard buttons and inline options
-
-
-
-## 🚀 Getting Started
+## 🛠️ Setup & Installation
 
 ### Prerequisites
 
-- Python 3.9 or higher
-- A Telegram account
-- A Telegram Bot Token from [@BotFather](https://t.me/botfather)
+```
+- Python 3.11+
+- PostgreSQL 14+
+- Redis 6+
+- OpenAI API Key
+- Foursquare API Key  
+- Telegram Bot Token
+```
 
-### Installation
+### 🚀 Environment Setup
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/foursquare-placemaker-bot.git
-   cd FSQ_Placemaker_Bot
-   ```
+1. **Clone and setup**:
+```bash
+git clone <repository-url>
+cd FSQ_Placemaker_Bot
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-2. Install the required dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. **Environment variables**:
+```bash
+cp env.example .env
+# Edit .env with your API keys and database settings
+```
 
-3. Replace the placeholder token in the code with your own bot token:
-   ```python
-   application = Application.builder().token("YOUR_BOT_TOKEN_HERE").build()
-   ```
+3. **Database setup**:
+```bash
+# Start PostgreSQL and Redis
+sudo systemctl start postgresql redis
 
-4. Run the bot:
-   ```bash
-   python bot.py
-   ```
+# Create database
+createdb placemaker_db
+```
 
-## 🔧 Configuration
+4. **Run the application**:
+```bash
+python main.py
+```
 
-The bot can be configured to suit different needs:
+## 📋 Configuration
 
-- Modify the categories in the `name_handler` function
-- Add or remove attributes in the `chain_status_handler` function
-- Configure the web app URL for Foursquare data exploration
+Key environment variables:
 
-## 📱 Usage
+```bash
+# API Keys (Required)
+OPENAI_API_KEY=your-openai-api-key-here
+FOURSQUARE_API_KEY=your-foursquare-api-key-here  
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
 
-1. Start a chat with your bot on Telegram
-2. Use the `/start` command to begin
-3. Choose to share your location or explore the Foursquare data
-4. Follow the guided process to add a new place
-5. Upload photos if available
-6. Confirm the submission
+# Database
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/placemaker_db
+
+# Server
+HOST=0.0.0.0
+PORT=8000
+ENVIRONMENT=development
+```
+
+## 🧪 Testing
+
+```bash
+# Run tests
+pytest
+
+# Run with coverage
+pytest --cov=src tests/
+
+# Type checking
+mypy src/
+
+# Code formatting
+black src/
+flake8 src/
+```
+
+## 🏗️ Development
+
+### Adding a New Agent
+
+1. Create agent class:
+```python
+from src.agents.base_agent import BaseAgent
+from src.models.pydantic_models import AgentType
+
+class MyAgent(BaseAgent):
+    def __init__(self):
+        super().__init__(AgentType.MY_AGENT, "MyAgent")
+    
+    async def can_handle(self, request):
+        # Logic to determine if agent can handle request
+        return True
+    
+    async def process_request(self, request):
+        # Process the request
+        return self.create_response("Response text")
+```
+
+2. Register agent:
+```python
+from src.agents import agent_registry
+agent_registry.register_agent(MyAgent())
+```
+
+### Database Migrations
+
+```bash
+# Generate migration
+alembic revision --autogenerate -m "Description"
+
+# Apply migrations  
+alembic upgrade head
+```
+
+## 🚀 Deployment
+
+### Docker Deployment
+
+```bash
+# Build image
+docker build -t placemaker .
+
+# Run with docker-compose
+docker-compose up -d
+```
+
+### Production Checklist
+
+- [ ] Set `ENVIRONMENT=production`
+- [ ] Configure proper `SECRET_KEY`
+- [ ] Set up SSL certificates
+- [ ] Configure logging aggregation
+- [ ] Set up monitoring and alerting
+- [ ] Configure backup strategy
+
+## 🏛️ Project Structure
+
+```
+PlacePilot/
+├── src/
+│   ├── agents/           # AI agent system
+│   │   ├── base_agent.py
+│   │   ├── supervisor_agent.py
+│   │   ├── search_agent.py
+│   │   ├── recommendation_agent.py
+│   │   └── data_management_agent.py
+│   ├── core/             # Core infrastructure
+│   │   ├── config.py     # Configuration management
+│   │   ├── database.py   # Database setup
+│   │   ├── logging.py    # Structured logging
+│   │   └── exceptions.py # Custom exceptions
+│   ├── integrations/     # External APIs
+│   │   ├── openai_client.py
+│   │   ├── foursquare_client.py
+│   │   └── telegram_client.py
+│   ├── models/           # Data models
+│   │   ├── pydantic_models.py  # API schemas
+│   │   └── database_models.py  # SQLAlchemy models
+│   ├── services/         # Business logic
+│   ├── utils/           # Utilities
+│   └── webapp/          # Web interface
+├── tests/               # Test suite
+├── docs/                # Documentation
+├── migrations/          # Database migrations
+├── main.py              # Application entry point
+└── requirements.txt     # Dependencies
+```
 
 ## 🤝 Contributing
 
@@ -96,32 +228,42 @@ Contributions are welcome! Here's how you can help:
 5. Push to the branch (`git push origin feature/amazing-feature`)
 6. Open a Pull Request
 
-## 🔄 Workflow
+### 🔄 Development Guidelines
 
-The bot implements a conversation flow with 10 states:
+- Follow PEP 8 style guidelines
+- Write comprehensive tests
+- Update documentation
+- Use type hints
+- Follow the existing architecture patterns
 
-1. LOCATION: User shares their location or accesses the web app
-2. NAME: User enters the name of the place
-3. CATEGORY: User selects or types a category
-4. ADDRESS: User provides the full address
-5. CONTACT: User enters contact information
-6. HOURS: User specifies operating hours
-7. CHAIN_STATUS: User indicates if the place is part of a chain
-8. ATTRIBUTES: User selects applicable attributes
-9. PHOTOS: User uploads photos (optional)
-10. CONFIRM: User reviews and confirms the submission
+## 📊 Monitoring & Observability
 
+PlacePilot includes built-in monitoring:
 
+- **Health Checks**: Database, Redis, external APIs
+- **Structured Logging**: JSON logs with context
+- **Metrics**: Performance and usage metrics
+- **Error Tracking**: Comprehensive error handling
+
+## 📈 Roadmap
+
+- [x] **Phase 1**: Core agent framework ✅ 
+- [ ] **Phase 2**: Specialized agents implementation
+- [ ] **Phase 3**: Advanced AI features
+- [ ] **Phase 4**: Production deployment
+- [ ] **Phase 5**: Analytics and insights
+- [ ] **Phase 6**: Multi-language support
 
 ---
 
-<p align="center">Made with ❤️ for the Placemaker community</p>
+## 📄 License
 
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-> Local Dev:
+## 🆘 Support
 
-```bash
-python3 -m http.server 8000 --bind 0.0.0.0
+For support, please open an issue or contact the development team.
 
-python conversational_search_bot.py
-``` 
+---
+
+**Built with ❤️ for the Foursquare community** 
