@@ -182,7 +182,7 @@ class ConversationMessage(BaseModel):
     message_type: MessageType
     content: str
     agent_name: Optional[str]
-    metadata: Optional[Dict[str, Any]]
+    message_metadata: Optional[Dict[str, Any]]
     created_at: datetime
     
     class Config:

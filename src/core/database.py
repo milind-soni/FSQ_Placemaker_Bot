@@ -51,8 +51,7 @@ class DatabaseManager:
                 pool_timeout=settings.database.pool_timeout,
                 pool_recycle=settings.database.pool_recycle,
                 echo=settings.server.debug,
-                future=True,
-                poolclass=NullPool if "sqlite" in settings.database.url else None
+                future=True
             )
             
             # Create session factory

@@ -15,11 +15,11 @@ asyncpg==0.29.0
 psycopg2-binary==2.9.9
 
 # Caching
-redis==5.0.1
-hiredis==2.2.3
+redis
+hiredis
 
 # AI and APIs
-openai==1.3.7
+openai==1.99.9
 python-telegram-bot==20.7
 
 # Configuration and environment
@@ -31,7 +31,6 @@ structlog==23.2.0
 # Utilities
 python-json-logger==2.0.7
 uuid==1.30
-base64==0.1.0
 
 # Development and testing
 pytest==7.4.3
