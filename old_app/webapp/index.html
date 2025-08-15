@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlacePilot - Places List View</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <title>Places List View</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="header">
-        <h1 style="color: #6cb3fa; margin: 0 0 1rem 0;">🤖 PlacePilot</h1>
         <div class="filters">
             <!-- Price Range Dropdown Pill -->
             <div class="pill-filter dropdown-pill">
@@ -36,12 +35,6 @@
         </div>
     </div>
     <div id="list-container"></div>
-    
-    <script>
-        // Inject places data from backend
-        window.placesData = {{ places_data|safe }};
-        window.hasData = {{ has_data|lower }};
-    </script>
-    <script src="/static/js/app.js"></script>
+    <script src="app.js"></script>
 </body>
 </html> 

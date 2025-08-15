@@ -85,9 +85,9 @@ class DataManagementAgent(StatefulAgent):
         """Start the place contribution process."""
         
         # Check if user has location
-        user_location = self._extract_user_location(request)
+        user_location = await self._extract_user_location(request)
         if not user_location:
-            return self._request_location_for_contribution()
+            return await self._request_location_for_contribution(request)
         
         # Initialize contribution data
         contribution_data = {
@@ -552,42 +552,77 @@ Type '/start' for the main menu or tell me what you'd like to do!"""
                 }
             )
     
-    def _extract_user_location(self, request: AgentRequest) -> Optional[Location]:
-        """Extract user location from request context."""
+    async def _extract_user_location(self, request: AgentRequest) -> Optional[Location]:
+        """Extract user location from saved profile or request context."""
         
+        # First, try to get saved location from user profile
+        try:
+            from ..services.user_service import UserService
+            user_service = UserService()
+            
+            saved_location = await user_service.get_user_location(request.user_id)
+            if saved_location:
+                self.logger.debug(f"Using saved location for user {request.user_id}")
+                return Location(
+                    latitude=saved_location["latitude"],
+                    longitude=saved_location["longitude"]
+                )
+        except Exception as e:
+            self.logger.warning(f"Failed to get saved location: {e}")
+        
+        # Fallback to context location (for when user just shared location)
         context = request.context or {}
-        
         lat = context.get("latitude")
         lng = context.get("longitude")
         
         if lat is not None and lng is not None:
             try:
+                self.logger.debug(f"Using context location for user {request.user_id}")
                 return Location(latitude=float(lat), longitude=float(lng))
             except (ValueError, TypeError):
                 return None
         
         return None
     
-    def _request_location_for_contribution(self) -> AgentResponse:
+    async def _request_location_for_contribution(self, request: AgentRequest) -> AgentResponse:
         """Request location for place contribution."""
         
-        response_text = """📍 **Location Required**
+        # Check if user has saved location but it might need updating
+        from ..services.user_service import UserService
+        user_service = UserService()
+        
+        has_saved_location = await user_service.user_has_location(request.user_id)
+        
+        if has_saved_location:
+            response_text = """📍 **Location Update Needed**
+
+I need a more precise location to add the new place correctly. Please:
+
+1. **Share your current location** for accurate placement, or
+2. **Tell me the specific area** where the place is located
+
+Your updated location will be saved for future contributions."""
+        else:
+            response_text = """📍 **Location Required**
 
 To add a new place, I need to know where you are so I can associate the place with the correct location.
 
-Please share your location or tell me the area where the place is located."""
+Please share your location or tell me the area where the place is located.
+
+Your location will be saved securely for future contributions."""
 
         return self.create_response(
             response_text=response_text,
             confidence=1.0,
             context_updates={
                 "conversation_state": ConversationState.LOCATION.value,
-                "contribution_pending": True
+                "contribution_pending": True,
+                "has_saved_location": has_saved_location
             },
             actions=[
                 {
                     "type": "request_location",
-                    "text": "Share Location 📍"
+                    "text": "📍 Share Location" if not has_saved_location else "📍 Update Location"
                 }
             ]
         )

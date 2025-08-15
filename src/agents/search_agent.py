@@ -42,10 +42,10 @@ class SearchAgent(BaseAgent):
                 conversation_id=request.conversation_id
             )
             
-            # Extract user location from context
-            user_location = self._extract_user_location(request)
+            # Extract user location from saved profile or context
+            user_location = await self._extract_user_location(request)
             if not user_location:
-                return self._request_location_response()
+                return await self._request_location_response(request)
             
             # Parse search query using AI
             search_params = await self._parse_search_query(request)
@@ -94,16 +94,32 @@ class SearchAgent(BaseAgent):
         # Can handle if search keywords present or user has location context
         return any(keyword in message for keyword in search_keywords) or has_location
     
-    def _extract_user_location(self, request: AgentRequest) -> Optional[Location]:
-        """Extract user location from request context."""
+    async def _extract_user_location(self, request: AgentRequest) -> Optional[Location]:
+        """Extract user location from saved profile or request context."""
         
+        # First, try to get saved location from user profile
+        try:
+            from ..services.user_service import UserService
+            user_service = UserService()
+            
+            saved_location = await user_service.get_user_location(request.user_id)
+            if saved_location:
+                self.logger.debug(f"Using saved location for user {request.user_id}")
+                return Location(
+                    latitude=saved_location["latitude"],
+                    longitude=saved_location["longitude"]
+                )
+        except Exception as e:
+            self.logger.warning(f"Failed to get saved location: {e}")
+        
+        # Fallback to context location (for when user just shared location)
         context = request.context or {}
-        
         lat = context.get("latitude")
         lng = context.get("longitude")
         
         if lat is not None and lng is not None:
             try:
+                self.logger.debug(f"Using context location for user {request.user_id}")
                 return Location(latitude=float(lat), longitude=float(lng))
             except (ValueError, TypeError) as e:
                 self.logger.warning(f"Invalid location coordinates: {e}")
@@ -181,29 +197,46 @@ class SearchAgent(BaseAgent):
             self.logger.error(f"Foursquare search failed: {e}")
             raise SearchAgentError(f"Place search failed: {e}")
     
-    def _request_location_response(self) -> AgentResponse:
+    async def _request_location_response(self, request: AgentRequest) -> AgentResponse:
         """Create response requesting user location."""
         
-        response_text = """📍 **Location Required**
+        # Check if user has saved location but it might need updating
+        from ..services.user_service import UserService
+        user_service = UserService()
+        
+        has_saved_location = await user_service.user_has_location(request.user_id)
+        
+        if has_saved_location:
+            response_text = """📍 **Location Update Needed**
+
+I couldn't find the exact area you're looking for with your saved location. Please:
+
+1. **Share your current location** to get accurate results, or
+2. **Tell me a specific area** like "restaurants in downtown Seattle"
+
+Your updated location will be saved for future searches."""
+        else:
+            response_text = """📍 **Location Required**
 
 To find places near you, I need to know your location. Please:
 
 1. **Share your location** using the location button, or
 2. **Tell me a specific area** like "restaurants in downtown Seattle"
 
-Your location is only used to find relevant places and is not stored."""
+Your location will be saved securely for future searches."""
 
         return self.create_response(
             response_text=response_text,
             confidence=1.0,
             context_updates={
                 "conversation_state": ConversationState.LOCATION.value,
-                "location_required": True
+                "location_required": True,
+                "has_saved_location": has_saved_location
             },
             actions=[
                 {
                     "type": "request_location",
-                    "text": "Share Location 📍"
+                    "text": "📍 Share Location" if not has_saved_location else "📍 Update Location"
                 }
             ]
         )
@@ -279,12 +312,12 @@ Would you like to try a different search?"""
                 "results_count": len(places)
             },
             actions=[
+                # Only add WebApp if we have a valid HTTPS URL
                 {
                     "type": "show_webapp",
                     "url": webapp_data["url"],
                     "text": "Open List View 📱"
-                },
-                {
+                } if webapp_data["url"] else {
                     "type": "suggest_refinement",
                     "text": "Refine Search 🔍"
                 }
@@ -382,8 +415,17 @@ Would you like to try a different search?"""
             places_json = json.dumps(places)
             places_b64 = base64.urlsafe_b64encode(places_json.encode()).decode()
             
-            # Create webapp URL (using the existing webapp endpoint)
-            webapp_url = f"http://localhost:8000/webapp/?data={places_b64}"
+            # Use HTTPS URL for Telegram WebApp (required by Telegram)
+            # For development, we'll return None to skip WebApp
+            from ..core.config import settings
+            webapp_base_url = settings.server.webapp_base_url
+            
+            if webapp_base_url and webapp_base_url.startswith('https://'):
+                webapp_url = f"{webapp_base_url}/?data={places_b64}"
+            else:
+                # Skip WebApp for local development (HTTP not allowed)
+                webapp_url = None
+                self.logger.info("Skipping WebApp - HTTPS URL required for Telegram WebApps")
             
             return {
                 "url": webapp_url,
@@ -393,6 +435,6 @@ Would you like to try a different search?"""
         except Exception as e:
             self.logger.warning(f"Failed to create webapp data: {e}")
             return {
-                "url": "http://localhost:8000/webapp/",
+                "url": None,
                 "data": ""
             } 

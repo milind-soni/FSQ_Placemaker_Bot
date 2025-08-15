@@ -214,7 +214,7 @@ class SupervisorAgent(BaseAgent):
         
         # Greeting/start
         if any(word in message for word in ["start", "hello", "hi", "hey"]):
-            return self._create_welcome_response()
+            return await self._create_welcome_response(request)
         
         # Help
         if "help" in message:
@@ -227,10 +227,32 @@ class SupervisorAgent(BaseAgent):
         # Default response for unhandled messages
         return self._create_default_response()
     
-    def _create_welcome_response(self) -> AgentResponse:
+    async def _create_welcome_response(self, request: AgentRequest) -> AgentResponse:
         """Create welcome response for new users."""
         
-        welcome_text = """🤖 Welcome to PlacePilot!
+        # Check if user has saved location
+        from ..services.user_service import UserService
+        user_service = UserService()
+        
+        has_saved_location = await user_service.user_has_location(request.user_id)
+        
+        if has_saved_location:
+            welcome_text = """🤖 Welcome back to PlacePilot!
+
+I remember your location from last time. I can help you:
+
+🔍 **Find Places**: Search for restaurants, cafes, shops, and more
+🧠 **Get Recommendations**: Personalized suggestions based on your preferences  
+📝 **Contribute Data**: Add new places and update information
+
+Just tell me what you're looking for!
+
+Try saying: "I'm looking for coffee shops nearby" or "Find me a good burger place" """
+
+            actions = []  # No location button needed
+            conversation_state = ConversationState.SEARCH.value
+        else:
+            welcome_text = """🤖 Welcome to PlacePilot!
 
 I'm your AI-powered location companion. I can help you:
 
@@ -238,23 +260,27 @@ I'm your AI-powered location companion. I can help you:
 🧠 **Get Recommendations**: Personalized suggestions based on your preferences  
 📝 **Contribute Data**: Add new places and update information
 
-To get started, just share your location or tell me what you're looking for!
+To get started, please share your location so I can find places near you!
 
-Try saying: "I'm looking for coffee shops nearby" or "Find me a good burger place" """
+Once shared, just tell me what you're looking for!"""
+
+            actions = [
+                {
+                    "type": "request_location", 
+                    "text": "📍 Share Location to Get Started"
+                }
+            ]
+            conversation_state = ConversationState.LOCATION.value
 
         return self.create_response(
             response_text=welcome_text,
             confidence=1.0,
             context_updates={
-                "conversation_state": ConversationState.LOCATION.value,
-                "welcome_shown": True
+                "conversation_state": conversation_state,
+                "welcome_shown": True,
+                "has_saved_location": has_saved_location
             },
-            actions=[
-                {
-                    "type": "request_location", 
-                    "text": "Share your location to get started"
-                }
-            ]
+            actions=actions
         )
     
     def _create_help_response(self) -> AgentResponse:

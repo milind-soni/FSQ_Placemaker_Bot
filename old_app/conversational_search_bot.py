@@ -15,12 +15,19 @@ import requests
 from dotenv import load_dotenv
 import re
 import base64
+from flask import Flask, request, jsonify, send_from_directory
+import threading
+import asyncio
 
 load_dotenv()
 
 OPENAI_KEY = os.environ.get("OPENAI_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 FOURSQUARE_API_KEY = os.environ.get("FOURSQUARE_API_KEY")
+WEBAPP_DOMAIN = os.environ.get("WEBAPP_DOMAIN", "localhost")
+WEBAPP_PORT = int(os.environ.get("WEBAPP_PORT", "8000"))
+USE_WEBHOOK = os.environ.get("USE_WEBHOOK", "false").lower() == "true"
+WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/webhook")
 
 client = OpenAI(api_key=OPENAI_KEY)
 
@@ -457,7 +464,7 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
             # Serialize and encode the results (now with image_url)
             places_json = json.dumps(results)
             places_b64 = base64.urlsafe_b64encode(places_json.encode()).decode()
-            webapp_url = f"http://192.168.1.44:8000/?data={places_b64}"
+            webapp_url = f"https://{WEBAPP_DOMAIN}/?data={places_b64}"
             keyboard = [[InlineKeyboardButton("Open List View", url=webapp_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
@@ -799,8 +806,52 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     return ConversationHandler.END
 
+# Flask app for serving webapp and webhooks
+app = Flask(__name__)
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for load balancer"""
+    return jsonify({"status": "healthy", "service": "placemaker-bot"})
+
+@app.route('/')
+def serve_webapp():
+    """Serve the main webapp HTML"""
+    return send_from_directory('webapp', 'index.html')
+
+@app.route('/<path:filename>')
+def serve_static(filename):
+    """Serve static files from webapp directory"""
+    return send_from_directory('webapp', filename)
+
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook():
+    """Handle incoming webhook requests from Telegram"""
+    try:
+        json_string = request.get_data().decode('utf-8')
+        update = Update.de_json(json.loads(json_string), bot)
+        
+        # Process the update in a separate thread
+        asyncio.run_coroutine_threadsafe(
+            application.process_update(update),
+            loop
+        )
+        
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}")
+        return jsonify({"error": "processing failed"}), 500
+
+def run_flask_app():
+    """Run Flask app in a separate thread"""
+    app.run(host='0.0.0.0', port=WEBAPP_PORT, debug=False)
+
 def main() -> None:
+    global application, bot, loop
+    
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    bot = application.bot
+    
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -829,7 +880,34 @@ def main() -> None:
         fallbacks=[CommandHandler("start", start), CommandHandler("cancel", cancel)]
     )
     application.add_handler(conv_handler)
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    if USE_WEBHOOK:
+        # Set up webhook mode
+        logger.info("Starting in webhook mode")
+        
+        # Start Flask app in a separate thread
+        flask_thread = threading.Thread(target=run_flask_app, daemon=True)
+        flask_thread.start()
+        
+        # Set up event loop for processing updates
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Set webhook URL
+        webhook_url = f"https://{WEBAPP_DOMAIN}{WEBHOOK_PATH}"
+        loop.run_until_complete(bot.set_webhook(url=webhook_url))
+        logger.info(f"Webhook set to: {webhook_url}")
+        
+        # Keep the main thread alive
+        try:
+            loop.run_forever()
+        except KeyboardInterrupt:
+            logger.info("Shutting down...")
+            loop.run_until_complete(bot.delete_webhook())
+    else:
+        # Use polling mode (for local development)
+        logger.info("Starting in polling mode")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main() 

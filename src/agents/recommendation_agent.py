@@ -43,10 +43,10 @@ class RecommendationAgent(BaseAgent):
                 conversation_id=request.conversation_id
             )
             
-            # Extract user location
-            user_location = self._extract_user_location(request)
+            # Extract user location from saved profile or context
+            user_location = await self._extract_user_location(request)
             if not user_location:
-                return self._request_location_response()
+                return await self._request_location_response(request)
             
             # Analyze user preferences from message
             preferences = await self._analyze_user_preferences(request)
@@ -106,16 +106,32 @@ class RecommendationAgent(BaseAgent):
         
         return has_recommendation_intent or has_preferences
     
-    def _extract_user_location(self, request: AgentRequest) -> Optional[Location]:
-        """Extract user location from request context."""
+    async def _extract_user_location(self, request: AgentRequest) -> Optional[Location]:
+        """Extract user location from saved profile or request context."""
         
+        # First, try to get saved location from user profile
+        try:
+            from ..services.user_service import UserService
+            user_service = UserService()
+            
+            saved_location = await user_service.get_user_location(request.user_id)
+            if saved_location:
+                self.logger.debug(f"Using saved location for user {request.user_id}")
+                return Location(
+                    latitude=saved_location["latitude"],
+                    longitude=saved_location["longitude"]
+                )
+        except Exception as e:
+            self.logger.warning(f"Failed to get saved location: {e}")
+        
+        # Fallback to context location (for when user just shared location)
         context = request.context or {}
-        
         lat = context.get("latitude")
         lng = context.get("longitude")
         
         if lat is not None and lng is not None:
             try:
+                self.logger.debug(f"Using context location for user {request.user_id}")
                 return Location(latitude=float(lat), longitude=float(lng))
             except (ValueError, TypeError) as e:
                 self.logger.warning(f"Invalid location coordinates: {e}")
@@ -500,7 +516,17 @@ class RecommendationAgent(BaseAgent):
             price_str = "💰 Price not available"
         
         # Category info
-        category_str = f"📍 {categories[0]}" if categories else ""
+        if categories:
+            # Extract first category name
+            first_category = categories[0]
+            if isinstance(first_category, dict) and "name" in first_category:
+                category_str = f"📍 {first_category['name']}"
+            elif isinstance(first_category, str):
+                category_str = f"📍 {first_category}"
+            else:
+                category_str = ""
+        else:
+            category_str = ""
         
         # Why recommended (simple logic)
         reason = self._get_recommendation_reason(place, preferences)
@@ -554,9 +580,18 @@ class RecommendationAgent(BaseAgent):
         
         # Cuisine match
         cuisine_pref = preferences.get("cuisine_type")
-        categories = [cat.lower() for cat in place.get("categories", [])]
-        if cuisine_pref and any(cuisine_pref.lower() in cat for cat in categories):
-            reasons.append("matches your taste")
+        categories = place.get("categories", [])
+        if cuisine_pref and categories:
+            # Extract category names from category objects
+            category_names = []
+            for cat in categories:
+                if isinstance(cat, dict) and "name" in cat:
+                    category_names.append(cat["name"].lower())
+                elif isinstance(cat, str):
+                    category_names.append(cat.lower())
+            
+            if any(cuisine_pref.lower() in cat_name for cat_name in category_names):
+                reasons.append("matches your taste")
         
         if not reasons:
             reasons.append("good option for you")
@@ -581,10 +616,26 @@ class RecommendationAgent(BaseAgent):
         
         return suggestions[0]  # Return the most relevant suggestion
     
-    def _request_location_response(self) -> AgentResponse:
+    async def _request_location_response(self, request: AgentRequest) -> AgentResponse:
         """Create response requesting user location."""
         
-        response_text = """📍 **Location Needed for Recommendations**
+        # Check if user has saved location but it might need updating
+        from ..services.user_service import UserService
+        user_service = UserService()
+        
+        has_saved_location = await user_service.user_has_location(request.user_id)
+        
+        if has_saved_location:
+            response_text = """📍 **Location Update Needed**
+
+I need a more accurate location to give you the best recommendations. Please:
+
+1. **Share your current location** for precise suggestions, or
+2. **Tell me a specific area** you'd like recommendations for
+
+Your updated location will be saved for future recommendations."""
+        else:
+            response_text = """📍 **Location Needed for Recommendations**
 
 I'd love to give you personalized recommendations! Please share your location so I can find the best places near you.
 
@@ -593,19 +644,20 @@ Your location helps me suggest places that are:
 • Highly rated in your area  
 • Within reasonable distance
 
-Your location is only used for recommendations and is not stored."""
+Your location will be saved securely for future recommendations."""
 
         return self.create_response(
             response_text=response_text,
             confidence=1.0,
             context_updates={
                 "conversation_state": ConversationState.LOCATION.value,
-                "recommendation_pending": True
+                "recommendation_pending": True,
+                "has_saved_location": has_saved_location
             },
             actions=[
                 {
                     "type": "request_location",
-                    "text": "Share Location 📍"
+                    "text": "📍 Share Location" if not has_saved_location else "📍 Update Location"
                 }
             ]
         )

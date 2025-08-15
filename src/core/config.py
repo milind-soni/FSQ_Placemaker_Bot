@@ -48,6 +48,7 @@ class ServerConfig(BaseModel):
     workers: int = Field(default=1, description="Number of workers")
     debug: bool = Field(default=False, description="Debug mode")
     reload: bool = Field(default=False, description="Auto-reload on changes")
+    webapp_base_url: Optional[str] = Field(default=None, description="Base URL for WebApp (must be HTTPS for Telegram)")
 
 
 class LoggingConfig(BaseModel):
@@ -153,7 +154,8 @@ def get_settings() -> Settings:
             port=int(os.getenv("PORT", "8000")),
             workers=int(os.getenv("WORKERS", "1")),
             debug=debug,
-            reload=debug
+            reload=debug,
+            webapp_base_url=os.getenv("WEBAPP_BASE_URL")
         ),
         logging=LoggingConfig(
             level=os.getenv("LOG_LEVEL", "INFO"),
