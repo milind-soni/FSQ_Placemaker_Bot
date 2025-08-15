@@ -1,0 +1,19 @@
+[Unit]
+Description=Foursquare Placemaker Telegram Bot
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/foursquare-placemaker-bot/old_app
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 conversational_search_bot.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=placemaker-bot
+
+[Install]
+WantedBy=multi-user.target 

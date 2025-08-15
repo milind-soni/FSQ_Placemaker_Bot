@@ -30,6 +30,10 @@ class User(Base):
     preferred_radius = Column(Integer, default=1000)  # in meters
     preferred_price_range = Column(String(10), nullable=True)  # e.g., "1-3"
     
+    # User location (saved for persistent location functionality)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    
     # Relationships
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     search_history = relationship("SearchHistory", back_populates="user", cascade="all, delete-orphan")

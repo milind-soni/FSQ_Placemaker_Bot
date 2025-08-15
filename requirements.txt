@@ -3,10 +3,10 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 python-multipart==0.0.6
+jinja2==3.1.2
 
-# Async and HTTP
+# Async and HTTP  
 httpx==0.25.2
-asyncio-mqtt==0.13.0
 
 # Database
 sqlalchemy[asyncio]==2.0.23
