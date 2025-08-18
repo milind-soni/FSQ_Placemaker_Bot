@@ -1,221 +1,127 @@
-# 🤖 PlacePilot: Your Location Companion
+# Foursquare Placemaker Telegram Bot 🗺️🤖
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Fused](https://img.shields.io/badge/Fused-udf-d1e550)](https://www.fused.io/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-✓-blue.svg)](https://core.telegram.org/bots/api)
+[![Docker](https://img.shields.io/badge/Docker-compatible-blue.svg)](https://www.docker.com/)
 
-PlacePilot is an intelligent Telegram bot that transforms how users interact with location data through natural language conversations. Built using agentic AI architecture, our bot serves as a comprehensive location assistant that can search, recommend, and help users contribute to the Foursquare database—all through simple chat interactions.
 
-## 🏗️ Architecture
+A production-ready Telegram bot for the Foursquare Placemaker community that enables users to contribute to the global places database directly from their mobile devices. Now with one-command setup using ngrok (no custom domain or SSL required).
 
-PlacePilot uses a modern, production-ready architecture:
+## 🌟 About Foursquare Placemakers
 
-- **Agentic AI System**: Supervisor agent coordinates specialized agents for different tasks
-- **Async-First**: Built with FastAPI and async/await patterns for high performance
-- **Microservices Ready**: Clean separation between agents, services, and integrations
-- **Production-Grade**: Structured logging, health checks, error handling, and monitoring
+> "Placemakers are the dedicated, passionate members of our global open source community who contribute to our shared understanding of places around the world. Welcome to our community of builders, developers, and local experts who help others unlock the best experiences, anywhere in the world."
 
-### 🌟 Core Components
+This bot makes the process of adding and updating place data more accessible to the Placemaker community, allowing contributions from anywhere using Telegram.
 
-```
-src/
-├── agents/          # Agentic AI system
-├── core/           # Configuration, database, logging
-├── integrations/   # External API clients
-├── models/         # Data models and schemas
-├── services/       # Business logic
-├── utils/          # Utility functions
-└── webapp/         # Web interface
-```
+## 🌆 Map Integration Web-App
 
-## 🚀 Features
+The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/):
+1. Foursquare Location Data [UDF](https://github.com/fusedio/udfs/tree/main/public/Foursquare_Open_Source_Places)
 
-### 🔍 Interactive Location Discovery
-- **Visual Map Integration**: Explore Foursquare's 100M+ POIs through interactive maps
-- **Natural Language Search**: "Show me coffee shops near Times Square"
-- **Real-time Data**: Access to Foursquare's comprehensive database
+## ✨ Features
 
-### 🧠 Smart Place Recommendations  
-- **Conversational Queries**: "I'm craving pizza in downtown, what are my options?"
-- **Rich Responses**: Photos, ratings, contact details, operating hours
-- **Context-Aware**: AI understands preferences and location context
+- **Location-Based Entry**: Start by sharing your current location to add nearby places
+- **Guided Place Submission**: Step-by-step process for complete place information
+- **Category Selection**: Choose from common place categories or enter custom ones
+- **Rich Place Attributes**: Add detailed information including:
+  - Contact information (phone, website, email)
+  - Operating hours
+  - Chain status
+  - Amenities (WiFi, parking, outdoor seating, etc.)
+- **Photo Uploads**: Submit up to 3 photos of the place (storefront, interior, features)
+- **Foursquare Map Integration**: Explore existing Foursquare location data through an embedded web app
+- **Conversational Interface**: User-friendly keyboard buttons and inline options
+- **Auto-ngrok + Auto-webhook**: Tunnel and webhook are configured automatically by Docker
 
-### 📝 Crowd-Sourced Data Enhancement
-- **Community Contributions**: Add new places through simple chat
-- **AI-Assisted Entry**: Natural language processing eliminates complex forms
-- **Quality Assurance**: Built-in validation ensures data accuracy
-
-## 🛠️ Setup & Installation
+## 🚀 Quick Start (ngrok, no SSL)
 
 ### Prerequisites
 
-```
-- Python 3.11+
-- PostgreSQL 14+
-- Redis 6+
+- Docker & Docker Compose
+- A Telegram Bot Token from [@BotFather](https://t.me/botfather)
 - OpenAI API Key
-- Foursquare API Key  
-- Telegram Bot Token
-```
+- Foursquare API Key
+- ngrok account (to obtain `NGROK_AUTHTOKEN`)
 
-### 🚀 Environment Setup
+### One-Command Deployment
 
-1. **Clone and setup**:
-```bash
-git clone <repository-url>
-cd FSQ_Placemaker_Bot
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
+1. Clone the repo and navigate:
+   ```bash
+   git clone https://github.com/yourusername/foursquare-placemaker-bot.git
+   cd foursquare-placemaker-bot
+   ```
 
-2. **Environment variables**:
-```bash
-cp env.example .env
-# Edit .env with your API keys and database settings
-```
+2. **Configure environment variables:**
+   ```bash
+   cp example-env .env
+   nano .env
+   ```
 
-3. **Database setup**:
-```bash
-# Start PostgreSQL and Redis
-sudo systemctl start postgresql redis
+   Fill in your configuration:
+   ```env
+   TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+   OPENAI_KEY=your_openai_api_key_here
+   FOURSQUARE_API_KEY=your_foursquare_api_key_here
+   NGROK_AUTHTOKEN=your_ngrok_authtoken
+   WEBAPP_PORT=8000
+   USE_WEBHOOK=true
+   WEBHOOK_PATH=/webhook
+   AUTO_SET_WEBHOOK=true
+   ```
 
-# Create database
-createdb placemaker_db
-```
+3. Deploy with one command:
+   ```bash
+   chmod +x deploy.sh
+   ./deploy.sh
+   ```
 
-4. **Run the application**:
-```bash
-python main.py
-```
+The script will:
+- Start the bot and an ngrok tunnel (Docker Compose)
+- Discover the public `https://*.ngrok.io` URL
+- Automatically register your Telegram webhook to `https://<ngrok>/webhook`
 
-## 📋 Configuration
+To view the ngrok dashboard: `http://localhost:4040`
 
-Key environment variables:
+## 🔧 Local Development
 
-```bash
-# API Keys (Required)
-OPENAI_API_KEY=your-openai-api-key-here
-FOURSQUARE_API_KEY=your-foursquare-api-key-here  
-TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
+You can also run without webhooks using polling:
 
-# Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/placemaker_db
+1. Set in `.env`:
+   ```env
+   USE_WEBHOOK=false
+   ```
 
-# Server
-HOST=0.0.0.0
-PORT=8000
-ENVIRONMENT=development
-```
+2. Start containers (ngrok service is optional in this mode):
+   ```bash
+   docker-compose up -d --build
+   ```
 
-## 🧪 Testing
+The bot will use long polling; ngrok/webhook is not required.
 
-```bash
-# Run tests
-pytest
+## 🔧 Configuration
 
-# Run with coverage
-pytest --cov=src tests/
+### Environment Variables
 
-# Type checking
-mypy src/
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token from BotFather | - | ✅ |
+| `OPENAI_KEY` | Your OpenAI API key | - | ✅ |
+| `FOURSQUARE_API_KEY` | Your Foursquare API key | - | ✅ |
+| `NGROK_AUTHTOKEN` | ngrok auth token (enables public https URL) | - | ✅ (webhook mode) |
+| `WEBAPP_PORT` | Port for the Flask web server | `8000` | ❌ |
+| `USE_WEBHOOK` | Use webhook mode (true) or polling (false) | `true` | ❌ |
+| `WEBHOOK_PATH` | Path for webhook endpoint | `/webhook` | ❌ |
+| `AUTO_SET_WEBHOOK` | Auto-discover ngrok URL and set webhook | `true` | ❌ |
 
-# Code formatting
-black src/
-flake8 src/
-```
+## 📱 Usage
 
-## 🏗️ Development
-
-### Adding a New Agent
-
-1. Create agent class:
-```python
-from src.agents.base_agent import BaseAgent
-from src.models.pydantic_models import AgentType
-
-class MyAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(AgentType.MY_AGENT, "MyAgent")
-    
-    async def can_handle(self, request):
-        # Logic to determine if agent can handle request
-        return True
-    
-    async def process_request(self, request):
-        # Process the request
-        return self.create_response("Response text")
-```
-
-2. Register agent:
-```python
-from src.agents import agent_registry
-agent_registry.register_agent(MyAgent())
-```
-
-### Database Migrations
-
-```bash
-# Generate migration
-alembic revision --autogenerate -m "Description"
-
-# Apply migrations  
-alembic upgrade head
-```
-
-## 🚀 Deployment
-
-### Docker Deployment
-
-```bash
-# Build image
-docker build -t placemaker .
-
-# Run with docker-compose
-docker-compose up -d
-```
-
-### Production Checklist
-
-- [ ] Set `ENVIRONMENT=production`
-- [ ] Configure proper `SECRET_KEY`
-- [ ] Set up SSL certificates
-- [ ] Configure logging aggregation
-- [ ] Set up monitoring and alerting
-- [ ] Configure backup strategy
-
-## 🏛️ Project Structure
-
-```
-PlacePilot/
-├── src/
-│   ├── agents/           # AI agent system
-│   │   ├── base_agent.py
-│   │   ├── supervisor_agent.py
-│   │   ├── search_agent.py
-│   │   ├── recommendation_agent.py
-│   │   └── data_management_agent.py
-│   ├── core/             # Core infrastructure
-│   │   ├── config.py     # Configuration management
-│   │   ├── database.py   # Database setup
-│   │   ├── logging.py    # Structured logging
-│   │   └── exceptions.py # Custom exceptions
-│   ├── integrations/     # External APIs
-│   │   ├── openai_client.py
-│   │   ├── foursquare_client.py
-│   │   └── telegram_client.py
-│   ├── models/           # Data models
-│   │   ├── pydantic_models.py  # API schemas
-│   │   └── database_models.py  # SQLAlchemy models
-│   ├── services/         # Business logic
-│   ├── utils/           # Utilities
-│   └── webapp/          # Web interface
-├── tests/               # Test suite
-├── docs/                # Documentation
-├── migrations/          # Database migrations
-├── main.py              # Application entry point
-└── requirements.txt     # Dependencies
-```
+1. Start a chat with your bot on Telegram
+2. Use the `/start` command to begin
+3. Share your location or explore the Foursquare data
+4. Follow the guided process to add a new place
+5. Upload photos if available
+6. Confirm the submission
 
 ## 🤝 Contributing
 
@@ -228,42 +134,51 @@ Contributions are welcome! Here's how you can help:
 5. Push to the branch (`git push origin feature/amazing-feature`)
 6. Open a Pull Request
 
-### 🔄 Development Guidelines
+## 🔄 Workflow
 
-- Follow PEP 8 style guidelines
-- Write comprehensive tests
-- Update documentation
-- Use type hints
-- Follow the existing architecture patterns
+The bot implements a conversation flow with 10 states:
 
-## 📊 Monitoring & Observability
+1. LOCATION: User shares their location or accesses the web app
+2. NAME: User enters the name of the place
+3. CATEGORY: User selects or types a category
+4. ADDRESS: User provides the full address
+5. CONTACT: User enters contact information
+6. HOURS: User specifies operating hours
+7. CHAIN_STATUS: User indicates if the place is part of a chain
+8. ATTRIBUTES: User selects applicable attributes
+9. PHOTOS: User uploads photos (optional)
+10. CONFIRM: User reviews and confirms the submission
 
-PlacePilot includes built-in monitoring:
 
-- **Health Checks**: Database, Redis, external APIs
-- **Structured Logging**: JSON logs with context
-- **Metrics**: Performance and usage metrics
-- **Error Tracking**: Comprehensive error handling
 
-## 📈 Roadmap
+## 🐳 Docker Commands
 
-- [x] **Phase 1**: Core agent framework ✅ 
-- [ ] **Phase 2**: Specialized agents implementation
-- [ ] **Phase 3**: Advanced AI features
-- [ ] **Phase 4**: Production deployment
-- [ ] **Phase 5**: Analytics and insights
-- [ ] **Phase 6**: Multi-language support
+```bash
+# Build and run with Docker Compose
+docker-compose up -d
 
----
+# View logs
+docker-compose logs -f
 
-## 📄 License
+# Stop services
+docker-compose down
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+# Rebuild and restart
+docker-compose down && docker-compose up -d --build
+```
 
-## 🆘 Support
+## 🔍 Monitoring & Troubleshooting
 
-For support, please open an issue or contact the development team.
+- Health endpoint (inside the tunnel): `GET /health`
+- ngrok dashboard: `http://localhost:4040`
+- Check webhook status:
+  ```bash
+  curl -X GET "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
+  ```
+- Reset webhook:
+  ```bash
+  curl -X GET "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/deleteWebhook"
+  ```
 
----
-
-**Built with ❤️ for the Foursquare community** 
+<p align="center">Made with ❤️ for the Placemaker community</p>
+<p align="center">🚀 ngrok-enabled, one-command setup!</p> 

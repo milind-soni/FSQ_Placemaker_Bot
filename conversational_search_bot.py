@@ -28,6 +28,9 @@ WEBAPP_DOMAIN = os.environ.get("WEBAPP_DOMAIN", "localhost")
 WEBAPP_PORT = int(os.environ.get("WEBAPP_PORT", "8000"))
 USE_WEBHOOK = os.environ.get("USE_WEBHOOK", "false").lower() == "true"
 WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/webhook")
+# ngrok discovery settings
+NGROK_API_BASE = os.environ.get("NGROK_API_BASE", "http://ngrok:4040")
+AUTO_SET_WEBHOOK = os.environ.get("AUTO_SET_WEBHOOK", "true").lower() == "true"
 
 client = OpenAI(api_key=OPENAI_KEY)
 
@@ -40,6 +43,41 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Helper: discover external base URL (ngrok if available)
+def discover_external_base_url(max_wait_seconds: int = 60) -> str:
+    """Try to discover the public HTTPS URL from the ngrok API.
+    Fallbacks to WEBAPP_DOMAIN if discovery fails.
+    """
+    api_url = f"{NGROK_API_BASE}/api/tunnels"
+    deadline = asyncio.get_event_loop().time() + max_wait_seconds
+    while True:
+        try:
+            resp = requests.get(api_url, timeout=3)
+            if resp.ok:
+                data = resp.json()
+                tunnels = data.get("tunnels", [])
+                for t in tunnels:
+                    public_url = t.get("public_url", "")
+                    proto = t.get("proto", "")
+                    if proto == "https" and public_url.startswith("https://"):
+                        return public_url
+        except Exception:
+            pass
+        if asyncio.get_event_loop().time() >= deadline:
+            break
+        # Short sleep before retrying
+        try:
+            asyncio.get_event_loop().run_until_complete(asyncio.sleep(1))
+        except RuntimeError:
+            # If called outside of a running loop
+            import time
+            time.sleep(1)
+    # Fallback to WEBAPP_DOMAIN (https) if not localhost
+    if WEBAPP_DOMAIN and WEBAPP_DOMAIN not in ("localhost", "127.0.0.1"):
+        return f"https://{WEBAPP_DOMAIN}"
+    # Final fallback to http localhost (useful in polling/dev only)
+    return f"http://localhost:{WEBAPP_PORT}"
 
 # Define a Pydantic model for GPT to parse search queries
 class FoursquareSearchParams(BaseModel):
@@ -464,7 +502,8 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
             # Serialize and encode the results (now with image_url)
             places_json = json.dumps(results)
             places_b64 = base64.urlsafe_b64encode(places_json.encode()).decode()
-            webapp_url = f"https://{WEBAPP_DOMAIN}/?data={places_b64}"
+            external_base = discover_external_base_url(max_wait_seconds=1)
+            webapp_url = f"{external_base}/?data={places_b64}"
             keyboard = [[InlineKeyboardButton("Open List View", url=webapp_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
@@ -893,10 +932,24 @@ def main() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # Set webhook URL
-        webhook_url = f"https://{WEBAPP_DOMAIN}{WEBHOOK_PATH}"
-        loop.run_until_complete(bot.set_webhook(url=webhook_url))
-        logger.info(f"Webhook set to: {webhook_url}")
+        # Initialize and start the PTB application on this loop
+        loop.run_until_complete(application.initialize())
+        loop.run_until_complete(application.start())
+        
+        # Discover external URL (prefer ngrok) and set webhook
+        if AUTO_SET_WEBHOOK:
+            external_base = discover_external_base_url()
+            if external_base.startswith("https://"):
+                webhook_url = f"{external_base}{WEBHOOK_PATH}"
+                loop.run_until_complete(bot.set_webhook(url=webhook_url))
+                logger.info(f"Webhook set to: {webhook_url}")
+            else:
+                logger.warning("Could not discover a public https URL; skipping webhook auto-registration.")
+        else:
+            # Fallback to WEBAPP_DOMAIN if auto-set disabled
+            webhook_url = f"https://{WEBAPP_DOMAIN}{WEBHOOK_PATH}"
+            loop.run_until_complete(bot.set_webhook(url=webhook_url))
+            logger.info(f"Webhook set to: {webhook_url}")
         
         # Keep the main thread alive
         try:
@@ -904,6 +957,8 @@ def main() -> None:
         except KeyboardInterrupt:
             logger.info("Shutting down...")
             loop.run_until_complete(bot.delete_webhook())
+            loop.run_until_complete(application.stop())
+            loop.run_until_complete(application.shutdown())
     else:
         # Use polling mode (for local development)
         logger.info("Starting in polling mode")
