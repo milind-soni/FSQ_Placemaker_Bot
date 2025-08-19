@@ -130,6 +130,9 @@ celerybeat.pid
 # poc ritik dir
 poc/
 
+# Hackathon idea
+.hackathon_idea/
+
 # Environments
 .env
 .venv

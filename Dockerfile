@@ -21,9 +21,9 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-# Create non-root user
-RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
+# Create non-root user (additional --no-log-init since it is taking too long to start)
+RUN useradd -m --no-log-init -u 1000 botuser && chown -R botuser:botuser /app
 USER botuser
 
 # Run the bot
-CMD ["python", "conversational_search_bot.py"] 
+CMD ["python", "-m", "placemaker_bot.main"] 
