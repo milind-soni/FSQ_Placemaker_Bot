@@ -6,3 +6,13 @@ WEBAPP_PORT=8000
 USE_WEBHOOK=true
 WEBHOOK_PATH=/webhook
 AUTO_SET_WEBHOOK=true
+
+# Logging (optional)
+APP_ENV=dev
+SERVICE_NAME=conversation_bot
+LOG_LEVEL=INFO
+LOG_TO_FILE=false
+LOG_FILE=logs/placemaker_bot.log
+LOG_ROTATE_WHEN=midnight
+LOG_ROTATE_INTERVAL=1
+LOG_BACKUP_COUNT=7
