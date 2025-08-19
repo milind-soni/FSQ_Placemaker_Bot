@@ -18,6 +18,10 @@ import base64
 from flask import Flask, request, jsonify, send_from_directory
 import threading
 import asyncio
+from logging.handlers import TimedRotatingFileHandler
+from pythonjsonlogger import jsonlogger
+import uuid
+import contextvars
 
 load_dotenv()
 
@@ -32,17 +36,183 @@ WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH", "/webhook")
 NGROK_API_BASE = os.environ.get("NGROK_API_BASE", "http://ngrok:4040")
 AUTO_SET_WEBHOOK = os.environ.get("AUTO_SET_WEBHOOK", "true").lower() == "true"
 
+# Logging configuration
+APP_ENV = os.environ.get("APP_ENV", "dev")
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "conversation_bot")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+LOG_TO_FILE = os.environ.get("LOG_TO_FILE", "false").lower() == "true"
+LOG_FILE = os.environ.get("LOG_FILE", "logs/placemaker_bot.log")
+LOG_ROTATE_WHEN = os.environ.get("LOG_ROTATE_WHEN", "midnight")
+LOG_ROTATE_INTERVAL = int(os.environ.get("LOG_ROTATE_INTERVAL", "1"))
+LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "7"))
+
+# Correlation id context
+request_id_var = contextvars.ContextVar("request_id", default=None)
+
+class EnrichedJsonFormatter(jsonlogger.JsonFormatter):
+    def add_fields(self, log_record, record, message_dict):
+        super().add_fields(log_record, record, message_dict)
+        # Ensure timestamp field
+        from datetime import datetime, timezone
+        log_record["timestamp"] = datetime.now(timezone.utc).isoformat()
+        log_record["level"] = (getattr(record, "levelname", None) or log_record.get("level", "INFO")).lower()
+        # Service/env
+        log_record.setdefault("service", SERVICE_NAME)
+        log_record.setdefault("env", APP_ENV)
+        # Correlation id
+        rid = getattr(record, "request_id", None) or request_id_var.get()
+        if rid:
+            log_record["request_id"] = rid
+        # Component/operation
+        module_name = getattr(record, "module_name", None)
+        if module_name:
+            log_record["module"] = module_name
+        operation = getattr(record, "operation", None)
+        if operation:
+            log_record["process"] = operation
+        # Telegram context if present
+        for attr in ("chat_id", "user_id", "update_id"):
+            value = getattr(record, attr, None)
+            if value is not None:
+                log_record[attr] = value
+
+class BaseContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Ensure base fields exist even if not provided in extra
+        if not hasattr(record, "service"):
+            record.service = SERVICE_NAME
+        if not hasattr(record, "env"):
+            record.env = APP_ENV
+        if not hasattr(record, "request_id"):
+            record.request_id = request_id_var.get()
+        return True
+
+def setup_logging() -> logging.Logger:
+    logger = logging.getLogger(SERVICE_NAME)
+    # Avoid duplicate handlers on reload
+    if logger.handlers:
+        return logger
+
+    logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+    formatter = EnrichedJsonFormatter(fmt="%(message)s")
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(BaseContextFilter())
+    logger.addHandler(stream_handler)
+
+    if LOG_TO_FILE:
+        # Ensure directory exists
+        try:
+            os.makedirs(os.path.dirname(LOG_FILE) or ".", exist_ok=True)
+        except Exception:
+            pass
+        file_handler = TimedRotatingFileHandler(
+            LOG_FILE, when=LOG_ROTATE_WHEN, interval=LOG_ROTATE_INTERVAL, backupCount=LOG_BACKUP_COUNT, utc=True
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.addFilter(BaseContextFilter())
+        logger.addHandler(file_handler)
+
+    # Reduce noisy loggers if needed
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    return logger
+
 client = OpenAI(api_key=OPENAI_KEY)
 
 # Conversation states
 (LOCATION, LOCATION_CHOICE, QUERY, REFINE, NAME, CATEGORY, ADDRESS, CONTACT, HOURS, CUSTOM_HOURS, ATTRIBUTES, 
  CHAIN_STATUS, PHOTOS, CONFIRM) = range(14)
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Remove basicConfig and use structured logger
+logger = setup_logging()
+
+# Helper to construct structured extra
+
+def build_log_extra(update: 'Update' = None, context: ContextTypes.DEFAULT_TYPE = None, module_name: str = None, operation: str = None, **kwargs):
+    extra = {}
+    if module_name:
+        extra["module_name"] = module_name
+    if operation:
+        extra["operation"] = operation
+    if update is not None:
+        try:
+            extra["chat_id"] = update.effective_chat.id
+        except Exception:
+            pass
+        try:
+            extra["user_id"] = update.effective_user.id
+        except Exception:
+            pass
+        try:
+            extra["update_id"] = update.update_id
+        except Exception:
+            pass
+        # Pull request id from context (conversation-scoped) if present
+        if context is not None:
+            try:
+                rid = context.user_data.get("request_id")
+            except Exception:
+                rid = None
+        else:
+            rid = getattr(update, "_request_id", None)
+        if rid:
+            extra["request_id"] = rid
+            try:
+                request_id_var.set(rid)
+            except Exception:
+                pass
+    # Merge additional fields
+    extra.update(kwargs)
+    return extra
+
+
+def ensure_request_id(update: 'Update' = None, context: ContextTypes.DEFAULT_TYPE = None, generate: bool = False) -> str:
+    # Prefer conversation-scoped id from context
+    if context is not None:
+        try:
+            rid = context.user_data.get("request_id")
+        except Exception:
+            rid = None
+    else:
+        rid = request_id_var.get()
+
+    if not rid and generate:
+        rid = str(uuid.uuid4())
+        if context is not None:
+            try:
+                context.user_data["request_id"] = rid
+            except Exception:
+                pass
+        request_id_var.set(rid)
+
+    # Mirror onto update if provided for convenience
+    if update is not None and rid and not getattr(update, "_request_id", None):
+        try:
+            setattr(update, "_request_id", rid)
+        except Exception:
+            pass
+    return rid
+
+
+def set_new_request_id(update: 'Update' = None, context: ContextTypes.DEFAULT_TYPE = None) -> str:
+    """Force-generate a new conversation-scoped request_id and store it in context."""
+    rid = str(uuid.uuid4())
+    if context is not None:
+        try:
+            context.user_data["request_id"] = rid
+        except Exception:
+            pass
+    request_id_var.set(rid)
+    if update is not None:
+        try:
+            setattr(update, "_request_id", rid)
+        except Exception:
+            pass
+    return rid
 
 # Helper: discover external base URL (ngrok if available)
 def discover_external_base_url(max_wait_seconds: int = 60) -> str:
@@ -184,7 +354,16 @@ async def parse_contact_info_gpt(user_input: str) -> dict:
     
     msg = completion.choices[0].message.parsed
 
-    print("GPT parse message = ", msg)
+    # Structured log of parsed contact info (without echoing raw user input)
+    logger.info(
+        "parsed contact info",
+        extra=build_log_extra(module_name="data_entry", operation="parse_contact_info", parsed={
+            "is_valid": msg.is_valid,
+            "has_phone": bool(msg.phone),
+            "has_website": bool(msg.website),
+            "has_email": bool(msg.email),
+        })
+    )
 
     # Return the structured dict
     return {
@@ -228,7 +407,13 @@ async def parse_hours_info_gpt(user_input: str) -> dict:
     
     msg = json.loads(completion.choices[0].message.content)
 
-    print(msg)
+    logger.info(
+        "parsed hours info",
+        extra=build_log_extra(module_name="data_entry", operation="parse_hours", parsed={
+            "is_valid": msg.get("is_valid"),
+            "has_hours": bool(msg.get("normalized_hours")),
+        })
+    )
 
     return {
         "is_valid": msg["is_valid"],
@@ -247,13 +432,25 @@ async def web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                  f"Address: {data.get('address', 'N/A')}",
             reply_markup=ReplyKeyboardRemove(),
         )
+        
+        logger.info(
+            "webapp data processed",
+            extra=build_log_extra(update, context, module_name="webapp", operation="web_app_data", fields_present=list(data.keys()))
+        )
     except json.JSONDecodeError:
         await update.message.reply_text(
             "Sorry, there was an error processing the data.",
             reply_markup=ReplyKeyboardRemove(),
         )
+        logger.warning(
+            "webapp data json decode error",
+            extra=build_log_extra(update, context, module_name="webapp", operation="web_app_data")
+        )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Generate a new conversation-scoped request_id on /start
+    set_new_request_id(update, context)
+    logger.info("/start received", extra=build_log_extra(update, context, module_name="conversation", operation="start"))
     keyboard = [
         [KeyboardButton("Share Location 📍", request_location=True)]
     ]
@@ -265,12 +462,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return LOCATION
 
 async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ensure_request_id(update, context)
     user_location = update.message.location
     context.user_data['location'] = {
         'latitude': user_location.latitude,
         'longitude': user_location.longitude
     }
     context.user_data['search_params'] = {}
+    logger.info(
+        "location received",
+        extra=build_log_extra(update, context, module_name="conversation", operation="location_handler", latitude=user_location.latitude, longitude=user_location.longitude)
+    )
     
     # Show menu with webapp option
     keyboard = [
@@ -296,7 +498,9 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return LOCATION_CHOICE
 
 async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ensure_request_id(update, context)
     user_query = update.message.text.strip()
+    logger.info("query received", extra=build_log_extra(update, context, module_name="search", operation="query_handler", user_query=user_query))
     
     # Show typing indicator while processing
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -310,7 +514,7 @@ async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             params[k] = v
     context.user_data['search_params'] = params
     # Print current filters to console for debugging
-    print("Current search filters:", params)
+    logger.info("search params updated", extra=build_log_extra(update, context, module_name="search", operation="query_handler", params=params))
     # On first query, immediately show results
     return await do_foursquare_search(update, context, ask_refine=True)
 
@@ -371,6 +575,7 @@ async def gpt_generate_results_header(params: dict) -> str:
     return completion.choices[0].message.content.strip()
 
 async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYPE, ask_refine=False) -> int:
+    ensure_request_id(update, context)
     # Show typing indicator while searching
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
@@ -404,16 +609,11 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
         "Authorization": f"Bearer {FOURSQUARE_API_KEY}"
     }
     try:
+        logger.info("foursquare search request", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", request_params={k: v for k, v in params.items() if k != 'll'}))
         resp = requests.get(base_url, params=params, headers=headers)
         data = resp.json()
-
-        print("="*50)
-        print(f"params = {params}")
-        print("="*50)
-        from pprint import pprint
-        pprint(data)
-        print("="*50)
         results = data.get("results", [])
+        logger.info("foursquare search response", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", results_count=len(results)))
 
         # --- Fetch images for each place ---
         # Show typing indicator while fetching images
@@ -443,10 +643,13 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                     target_h = int((target_w / width) * height) if width and height else 225
                     image_url = f"{prefix}{target_w}x{target_h}{suffix}"
                     place["image_url"] = image_url
+                    logger.debug("photo fetched", extra=build_log_extra(update, context, module_name="search", operation="fetch_photo", fsq_id=fsq_id))
                 else:
                     place["image_url"] = None
-            except Exception as e:
+                    logger.debug("no photos available", extra=build_log_extra(update, context, module_name="search", operation="fetch_photo", fsq_id=fsq_id))
+            except Exception:
                 place["image_url"] = None
+                logger.warning("photo fetch failed", extra=build_log_extra(update, context, module_name="search", operation="fetch_photo", fsq_id=fsq_id), exc_info=True)
         # --- End fetch images ---
 
         if not results:
@@ -522,6 +725,7 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 return QUERY
     except Exception as e:
+        logger.error("foursquare search failed", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search"), exc_info=True)
         await update.message.reply_text(f"Error: {e}")
         return QUERY
 
@@ -547,21 +751,26 @@ async def gpt_refine_intent(user_message: str) -> bool:
     return result == 'end'
 
 async def refine_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    ensure_request_id(update, context)
     user_text = update.message.text.strip()
     
     # Show typing indicator while processing
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
     if await gpt_refine_intent(user_text):
+        logger.info("refine done", extra=build_log_extra(update, context, module_name="search", operation="refine_handler", decision="end"))
         await update.message.reply_text("Okay! If you want to start a new search, just type your query or /start.")
         return ConversationHandler.END
     else:
+        logger.info("refine continue", extra=build_log_extra(update, context, module_name="search", operation="refine_handler", decision="refine"))
         # Treat any other input as a new filter
         return await query_handler(update, context)
 
 async def location_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the user's choice after location is shared."""
+    ensure_request_id(update, context)
     user_text = update.message.text.strip().lower()
+    logger.info("location menu choice", extra=build_log_extra(update, context, module_name="conversation", operation="location_choice_handler", choice=user_text))
     
     if "search foursquare data" in user_text:
         await update.message.reply_text(
@@ -868,6 +1077,9 @@ def webhook():
     """Handle incoming webhook requests from Telegram"""
     try:
         json_string = request.get_data().decode('utf-8')
+        # Webhook received; request_id is conversation-scoped and created on /start
+        logger.info("webhook received", extra={"service": SERVICE_NAME, "env": APP_ENV})
+
         update = Update.de_json(json.loads(json_string), bot)
         
         # Process the update in a separate thread
@@ -876,9 +1088,10 @@ def webhook():
             loop
         )
         
+        logger.info("webhook update scheduled", extra={"service": SERVICE_NAME, "env": APP_ENV})
         return jsonify({"status": "ok"})
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
+        logger.error("Error processing webhook", extra={"service": SERVICE_NAME, "env": APP_ENV}, exc_info=True)
         return jsonify({"error": "processing failed"}), 500
 
 def run_flask_app():

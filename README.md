@@ -47,34 +47,44 @@ The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/)
 ### One-Command Deployment
 
 1. Clone the repo and navigate:
-   ```bash
-   git clone https://github.com/yourusername/foursquare-placemaker-bot.git
-   cd foursquare-placemaker-bot
-   ```
+```bash
+git clone https://github.com/yourusername/foursquare-placemaker-bot.git
+cd foursquare-placemaker-bot
+```
 
 2. **Configure environment variables:**
-   ```bash
-   cp example-env .env
-   nano .env
-   ```
+```bash
+cp example-env .env
+nano .env
+```
 
-   Fill in your configuration:
-   ```env
-   TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-   OPENAI_KEY=your_openai_api_key_here
-   FOURSQUARE_API_KEY=your_foursquare_api_key_here
-   NGROK_AUTHTOKEN=your_ngrok_authtoken
-   WEBAPP_PORT=8000
-   USE_WEBHOOK=true
-   WEBHOOK_PATH=/webhook
-   AUTO_SET_WEBHOOK=true
-   ```
+Fill in your configuration:
+```env
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+OPENAI_KEY=your_openai_api_key_here
+FOURSQUARE_API_KEY=your_foursquare_api_key_here
+NGROK_AUTHTOKEN=your_ngrok_authtoken
+WEBAPP_PORT=8000
+USE_WEBHOOK=true
+WEBHOOK_PATH=/webhook
+AUTO_SET_WEBHOOK=true
+
+# Optional: Structured logging
+APP_ENV=dev
+SERVICE_NAME=conversation_bot
+LOG_LEVEL=INFO
+LOG_TO_FILE=false
+LOG_FILE=logs/placemaker_bot.log
+LOG_ROTATE_WHEN=midnight
+LOG_ROTATE_INTERVAL=1
+LOG_BACKUP_COUNT=7
+```
 
 3. Deploy with one command:
-   ```bash
-   chmod +x deploy.sh
-   ./deploy.sh
-   ```
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
 
 The script will:
 - Start the bot and an ngrok tunnel (Docker Compose)
@@ -88,14 +98,14 @@ To view the ngrok dashboard: `http://localhost:4040`
 You can also run without webhooks using polling:
 
 1. Set in `.env`:
-   ```env
-   USE_WEBHOOK=false
-   ```
+```env
+USE_WEBHOOK=false
+```
 
 2. Start containers (ngrok service is optional in this mode):
-   ```bash
-   docker-compose up -d --build
-   ```
+```bash
+docker-compose up -d --build
+```
 
 The bot will use long polling; ngrok/webhook is not required.
 
@@ -113,6 +123,14 @@ The bot will use long polling; ngrok/webhook is not required.
 | `USE_WEBHOOK` | Use webhook mode (true) or polling (false) | `true` | ❌ |
 | `WEBHOOK_PATH` | Path for webhook endpoint | `/webhook` | ❌ |
 | `AUTO_SET_WEBHOOK` | Auto-discover ngrok URL and set webhook | `true` | ❌ |
+| `APP_ENV` | Deployment environment name for logs | `dev` | ❌ |
+| `SERVICE_NAME` | Service name added to logs | `conversation_bot` | ❌ |
+| `LOG_LEVEL` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` | ❌ |
+| `LOG_TO_FILE` | Enable file logging in addition to stdout | `false` | ❌ |
+| `LOG_FILE` | File path for logs when `LOG_TO_FILE=true` | `logs/placemaker_bot.log` | ❌ |
+| `LOG_ROTATE_WHEN` | Rotation schedule for logs | `midnight` | ❌ |
+| `LOG_ROTATE_INTERVAL` | Rotation interval (units depend on `when`) | `1` | ❌ |
+| `LOG_BACKUP_COUNT` | Number of rotated files to keep | `7` | ❌ |
 
 ## 📱 Usage
 
@@ -171,6 +189,8 @@ docker-compose down && docker-compose up -d --build
 
 - Health endpoint (inside the tunnel): `GET /health`
 - ngrok dashboard: `http://localhost:4040`
+- Logs are JSON-formatted to stdout by default; enable file logging with rotation via `LOG_TO_FILE=true` and `LOG_FILE`/rotation vars
+- Correlated requests: send `X-Request-ID` header to the webhook, or a UUID will be generated and included in responses
 - Check webhook status:
   ```bash
   curl -X GET "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"

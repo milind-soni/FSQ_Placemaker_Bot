@@ -4,3 +4,4 @@ python-dotenv==1.1.0
 requests==2.32.3
 flask==3.0.3
 pydantic==2.10.4
+python-json-logger==2.0.7
