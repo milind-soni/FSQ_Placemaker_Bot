@@ -20,13 +20,26 @@ from telegram.constants import ChatAction
 from .logging import build_log_extra, ensure_request_id, set_new_request_id
 from .logging import setup_logging
 from .llm import LLMClient
-from .models import FoursquareSearchParams, UserInputClassifier
+from .models import FoursquareSearchParams, UserInputClassifier, AddressParseResult
 from .foursquare import FoursquareClient
 from .utils import discover_external_base_url
+
+from pathlib import Path
 
 logger = setup_logging()
 llm = LLMClient()
 fsq = FoursquareClient()
+
+# Load category mapping (human-readable -> category ID)
+_FSQ_CATEGORIES_DOCS_URL = "https://docs.foursquare.com/data-products/docs/categories"
+_CATEGORIES_JSON_PATH = Path(__file__).parent / "assets" / "personalization-apis-movement-sdk-categories.json"
+try:
+    with open(_CATEGORIES_JSON_PATH, "r", encoding="utf-8") as _f:
+        _CATEGORY_NAME_TO_ID: Dict[str, str] = json.load(_f)
+except Exception:
+    _CATEGORY_NAME_TO_ID = {}
+_CATEGORY_KEY_LOWER_TO_ID: Dict[str, str] = {k.strip().lower(): v for k, v in _CATEGORY_NAME_TO_ID.items()}
+_CATEGORY_VALID_NAMES: list[str] = list(_CATEGORY_NAME_TO_ID.keys())
 
 (
     LOCATION,
@@ -41,9 +54,57 @@ fsq = FoursquareClient()
     CUSTOM_HOURS,
     ATTRIBUTES,
     CHAIN_STATUS,
+    CHAIN_DETAILS,
+    PRIVATE_PLACE,
     PHOTOS,
     CONFIRM,
-) = range(14)
+) = range(16)
+
+
+def _is_valid_categories(value: str) -> bool:
+    # Allow comma-separated FSQ category IDs (alphanumeric tokens)
+    tokens = [t.strip() for t in str(value).split(',') if t.strip()]
+    return len(tokens) > 0 and all(t.isalnum() for t in tokens)
+
+
+def _sanitize_suggest_params(raw: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_keys = {
+        'name', 'categories', 'address', 'locality', 'region', 'postcode', 'countryCode',
+        'latitude', 'longitude', 'parentId', 'isPrivatePlace', 'tel', 'website',
+        'email', 'facebookUrl', 'instagram', 'twitter', 'hours', 'attributes', 'dry_run'
+    }
+    params: Dict[str, Any] = {k: v for k, v in raw.items() if k in allowed_keys}
+
+    # Drop empty values
+    params = {k: v for k, v in params.items() if v not in (None, "", [])}
+
+    # Categories must be FSQ category IDs (alphanumeric)
+    if 'categories' in params and not _is_valid_categories(params['categories']):
+        params.pop('categories', None)
+
+    # Convert boolean to lowercase string for isPrivatePlace and dry_run
+    if isinstance(params.get('isPrivatePlace'), bool):
+        params['isPrivatePlace'] = 'true' if params['isPrivatePlace'] else 'false'
+    if isinstance(params.get('dry_run'), bool):
+        params['dry_run'] = 'true' if params['dry_run'] else 'false'
+
+    # Latitude/Longitude ensure basic types
+    if 'latitude' in params:
+        try:
+            params['latitude'] = float(params['latitude'])
+        except Exception:
+            params.pop('latitude', None)
+    if 'longitude' in params:
+        try:
+            params['longitude'] = float(params['longitude'])
+        except Exception:
+            params.pop('longitude', None)
+
+    # Hours: strip whitespace and trailing semicolons
+    if 'hours' in params:
+        params['hours'] = str(params['hours']).strip().strip(';')
+
+    return params
 
 
 async def parse_search_query_gpt(user_input: str, current_params: dict | None = None) -> Any:
@@ -105,10 +166,10 @@ async def suggest_next_filters(params: dict) -> str:
 
 async def parse_contact_info_gpt(user_input: str) -> Dict[str, Any]:
     user_prompt = f"""
-        You are a helpful assistant. The user is entering contact details (phone, website, email) in a single string. These details could be in any order, with any separators.
-
-        1. Parse out "phone", "website", and "email" from the text. If something isn't provided, output an empty string for that field.
-        2. If the input is incomplete or you can't identify the fields, you must set "is_valid" to false. The checks for input fields can be very basic
+        You are a helpful assistant. The user is entering contact details and social links in free text.
+        Parse any of these fields you can find: phone, website, email, facebookUrl, instagram, twitter.
+        If a field isn't provided, return an empty string for it.
+        Set is_valid=false only if the content is clearly unrelated to contact/social information.
 
         User input: {user_input}
         """
@@ -125,6 +186,9 @@ async def parse_contact_info_gpt(user_input: str) -> Dict[str, Any]:
         "phone": parsed.phone,
         "website": parsed.website,
         "email": parsed.email,
+        "facebookUrl": getattr(parsed, "facebookUrl", ""),
+        "instagram": getattr(parsed, "instagram", ""),
+        "twitter": getattr(parsed, "twitter", ""),
     }
 
 
@@ -165,6 +229,52 @@ async def parse_hours_info_gpt(user_input: str) -> Dict[str, Any]:
     }
 
 
+async def parse_hours_to_api_gpt(user_input: str) -> Dict[str, Any]:
+    user_prompt = f"""
+        Convert the following operating hours into the Foursquare Places API hours string.
+        Format: a semicolon-separated list of entries: day,start,end or day,start,end,label.
+        Days: 1=Monday ... 7=Sunday. Times: HHMM 24-hour format. Prefix + if end time goes past midnight.
+        Examples:
+        - 24/7: 1,0000,2400;2,0000,2400;3,0000,2400;4,0000,2400;5,0000,2400;6,0000,2400;7,0000,2400
+
+        Input: {user_input}
+
+        Return valid JSON only with keys: {{"is_valid": <bool>, "hours": "<string or empty>", "explanation": "<string>"}}
+    """
+    completion = llm.client.beta.chat.completions.parse(
+        model="gpt-4.1-nano",
+        messages=[
+            {"role": "system", "content": "You are a parsing assistant."},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    msg = json.loads(completion.choices[0].message.content)
+    return {"is_valid": msg["is_valid"], "hours": msg["hours"], "explanation": msg["explanation"]}
+
+
+async def parse_address_info_gpt(user_input: str) -> AddressParseResult:
+    user_prompt = f"""
+        You are parsing a place address from free text. Extract the following fields when possible:
+        - address (street address)
+        - locality (city)
+        - region (state or province)
+        - postcode (postal/zip code)
+        - countryCode (2-letter code like US, IN)
+        If you are unsure, leave the field empty. Set is_valid=false only if the input clearly isn't an address.
+
+        Input: {user_input}
+    """
+    parsed = llm.parse(
+        model="gpt-4.1-nano",
+        messages=[
+            {"role": "system", "content": "You are a parsing assistant."},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format=AddressParseResult,
+    )
+    return parsed
+
+
 async def gpt_suggest_refine_prompt(params: dict) -> str:
     missing: list[str] = []
     if not params.get("radius"):
@@ -177,7 +287,7 @@ async def gpt_suggest_refine_prompt(params: dict) -> str:
         missing.append("maximum price")
     user_context: list[str] = []
     for k, v in params.items():
-        if v is not None and v != "":
+        if v is not None and v != "" and k != "query":
             user_context.append(f"{k}: {v}")
     gpt_prompt = f"""
         You are a friendly assistant helping a user search for places. The user has already set these filters: {', '.join(user_context) if user_context else 'none yet'}.
@@ -216,6 +326,40 @@ async def gpt_generate_results_header(params: dict) -> str:
             {"role": "user", "content": gpt_prompt},
         ],
     )
+
+
+# --- Category parsing helpers ---
+async def parse_categories_gpt(user_input: str, valid_names: list[str]) -> list[str]:
+    prompt = f"""
+    Extract category-like terms from the user's message.
+    - Output a comma-separated list of short category names or phrases present or clearly implied by the user input.
+    - Keep names concise (1-3 words). Use only what the user said; do not invent unseen categories.
+    - Normalize by removing emojis and extraneous punctuation.
+    - Split combined phrases like 'bars and cafes' into 'bar, cafe'.
+    - If nothing category-like is present, return an empty string.
+
+    Reply with CSV only and no extra text.
+
+    User input: {user_input}
+    """
+    raw = llm.chat(
+        model="gpt-4.1-nano",
+        temperature=0,
+        messages=[
+            {"role": "system", "content": "You extract concise keywords and output CSV only."},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    tokens = [t.strip().strip('"\'') for t in raw.split(',') if t.strip()]
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tokens:
+        tl = t.lower()
+        if tl not in seen:
+            seen.add(tl)
+            out.append(t)
+    return out
 
 
 async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYPE, ask_refine: bool = False) -> int:
@@ -439,6 +583,11 @@ async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     current_params = context.user_data.get('search_params', {})
     gpt_result = await parse_search_query_gpt(user_query, current_params)
+    # Log GPT parsed output for debugging
+    try:
+        logger.info("gpt parsed search params", extra=build_log_extra(update, context, module_name="search", operation="query_handler", gpt_parsed=gpt_result.model_dump()))
+    except Exception:
+        logger.info("gpt parsed search params", extra=build_log_extra(update, context, module_name="search", operation="query_handler"))
     params = current_params.copy()
     for k, v in gpt_result.model_dump().items():
         if v is not None and v != "":
@@ -451,6 +600,13 @@ async def query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def refine_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     ensure_request_id(update, context)
     user_text = update.message.text.strip()
+    try:
+        logger.info(
+            "refine raw received",
+            extra=build_log_extra(update, context, module_name="search", operation="refine_handler", raw=user_text),
+        )
+    except Exception:
+        logger.info("refine raw received", extra=build_log_extra(update, context, module_name="search", operation="refine_handler"))
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
     if await gpt_refine_intent(user_text):
@@ -475,7 +631,7 @@ async def location_choice_handler(update: Update, context: ContextTypes.DEFAULT_
         return QUERY
     elif "add a new place" in user_text:
         await update.message.reply_text(
-            "Great! Now, please enter the name of the place:",
+            "Great! First, what's the place called?",
             reply_markup=ReplyKeyboardRemove(),
         )
         return NAME
@@ -485,30 +641,138 @@ async def location_choice_handler(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['name'] = update.message.text
-    categories = [
-        ["Restaurant 🍽️", "Shop 🛍️", "Hotel 🏨"],
-        ["Bar 🍸", "Cafe ☕", "Entertainment 🎭"],
-        ["Services 🔧", "Other 📌"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(categories, resize_keyboard=True)
-    await update.message.reply_text("Please select or type the category:", reply_markup=reply_markup)
+    context.user_data['name'] = update.message.text.strip()
+    try:
+        logger.info(
+            "name received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="name_handler", name=context.user_data['name']),
+        )
+    except Exception:
+        logger.info("name received", extra=build_log_extra(update, context, module_name="new_place", operation="name_handler"))
+    prompt = (
+        "Now, add one or more categories this place fits in (comma-separated). "
+        "Use natural names like 'Arcade, Aquarium'. You can /skip if unsure.\n\n"
+        f"If you need help, refer to valid categories here: <a href=\"{_FSQ_CATEGORIES_DOCS_URL}\">link</a>"
+    )
+    await update.message.reply_text(
+        prompt,
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
     return CATEGORY
 
 
 async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['category'] = update.message.text
-    await update.message.reply_text("Please enter the address of the place:", reply_markup=ReplyKeyboardRemove())
+    text = update.message.text.strip()
+    try:
+        logger.info(
+            "category raw received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="category_handler", raw=text),
+        )
+    except Exception:
+        logger.info("category raw received", extra=build_log_extra(update, context, module_name="new_place", operation="category_handler"))
+    if text.lower().startswith("/skip") or text.lower() == "skip":
+        context.user_data['categories_ids'] = ""
+        context.user_data['categories_names'] = []
+        await update.message.reply_text("What's the address? Paste it as you would normally (/skip to skip)", reply_markup=ReplyKeyboardRemove())
+        return ADDRESS
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    # Parse categories via GPT to normalized names from the allowed list
+    try:
+        parsed_names = await parse_categories_gpt(text, _CATEGORY_VALID_NAMES)
+        try:
+            logger.info(
+                "gpt parsed categories",
+                extra=build_log_extra(update, context, module_name="new_place", operation="category_handler", gpt_parsed=parsed_names),
+            )
+        except Exception:
+            logger.info("gpt parsed categories", extra=build_log_extra(update, context, module_name="new_place", operation="category_handler"))
+    except Exception:
+        parsed_names = [t.strip() for t in text.split(',') if t.strip()]
+
+    # Validate against mapping (case-insensitive)
+    unknown: list[str] = []
+    mapped_ids: list[str] = []
+    accepted_names: list[str] = []
+    for name in parsed_names:
+        key = name.strip().lower()
+        if key in _CATEGORY_KEY_LOWER_TO_ID:
+            mapped_ids.append(_CATEGORY_KEY_LOWER_TO_ID[key])
+            # Use canonical display name from the file for summary
+            accepted_names.append(next(k for k in _CATEGORY_NAME_TO_ID.keys() if k.lower() == key))
+        else:
+            unknown.append(name)
+
+    try:
+        logger.info(
+            "category mapping result",
+            extra=build_log_extra(update, context, module_name="new_place", operation="category_handler", mapped_ids=mapped_ids, accepted_names=accepted_names, unknown=unknown),
+        )
+    except Exception:
+        logger.info("category mapping result", extra=build_log_extra(update, context, module_name="new_place", operation="category_handler"))
+
+    if unknown or not mapped_ids:
+        msg_parts = []
+        if unknown:
+            msg_parts.append("I couldn't find these categories: " + ", ".join(unknown))
+        msg_parts.append(f"Refer to this <a href=\"{_FSQ_CATEGORIES_DOCS_URL}\">link</a> for valid categories.")
+        await update.message.reply_text(
+            "\n".join(msg_parts),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        return CATEGORY
+
+    context.user_data['categories_ids'] = ",".join(mapped_ids)
+    context.user_data['categories_names'] = accepted_names
+
+    await update.message.reply_text("What's the address? Paste it as you would normally (/skip to skip)", reply_markup=ReplyKeyboardRemove())
     return ADDRESS
 
 
 async def address_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['address'] = update.message.text
+    user_text = update.message.text.strip()
+    try:
+        logger.info(
+            "address raw received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="address_handler", raw=user_text),
+        )
+    except Exception:
+        logger.info("address raw received", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
+    if user_text.lower().startswith("/skip") or user_text.lower() == "skip":
+        context.user_data['address_fields'] = {}
+    else:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        parsed = await parse_address_info_gpt(user_text)
+        # Log GPT parsed output
+        try:
+            logger.info("gpt parsed address", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler", gpt_parsed=parsed.model_dump()))
+        except Exception:
+            logger.info("gpt parsed address", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
+        if not parsed.is_valid:
+            await update.message.reply_text(
+                "Hmm, that didn't look like an address. Try again, or /skip.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return ADDRESS
+        context.user_data['address_fields'] = {
+            'address': parsed.address,
+            'locality': parsed.locality,
+            'region': parsed.region,
+            'postcode': parsed.postcode,
+            'countryCode': parsed.countryCode,
+        }
+        try:
+            logger.info(
+                "address structured stored",
+                extra=build_log_extra(update, context, module_name="new_place", operation="address_handler", address_fields=context.user_data['address_fields']),
+            )
+        except Exception:
+            logger.info("address structured stored", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
     await update.message.reply_text(
-        "Please enter contact information:\n"
-        "Format: phone,website,email\n"
-        "Example: +1234567890,www.example.com,contact@example.com\n"
-        "(Type 'skip' to skip this step)",
+        "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
         reply_markup=ReplyKeyboardRemove(),
     )
     return CONTACT
@@ -516,69 +780,140 @@ async def address_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_text = update.message.text.strip()
-    if user_text.lower() == 'skip':
-        keyboard = [[KeyboardButton("Open 24/7")], [KeyboardButton("Custom Hours")]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("Please select the operating hours:", reply_markup=reply_markup)
-        return HOURS
-
-    result = await parse_contact_info_gpt(user_text)
-    if not result["is_valid"]:
-        await update.message.reply_text(
-            "Your contact info seems invalid or incomplete.\n"
-            "Please try again. Format: phone,website,email\n"
-            "(Type 'skip' to skip.)"
+    try:
+        logger.info(
+            "contact raw received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="contact_handler", raw=user_text),
         )
-        return CONTACT
+    except Exception:
+        logger.info("contact raw received", extra=build_log_extra(update, context, module_name="new_place", operation="contact_handler"))
+    if user_text.lower() in {"skip", "/skip"}:
+        context.user_data["contact"] = {}
     else:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        result = await parse_contact_info_gpt(user_text)
+        # Log GPT parsed output
+        try:
+            logger.info("gpt parsed contact", extra=build_log_extra(update, context, module_name="new_place", operation="contact_handler", gpt_parsed=result))
+        except Exception:
+            logger.info("gpt parsed contact", extra=build_log_extra(update, context, module_name="new_place", operation="contact_handler"))
+        if not result["is_valid"]:
+            await update.message.reply_text(
+                "Couldn't parse that. Try again or /skip."
+            )
+            return CONTACT
         context.user_data["contact"] = {
-            "phone": result["phone"],
-            "website": result["website"],
-            "email": result["email"],
+            "phone": result.get("phone", ""),
+            "website": result.get("website", ""),
+            "email": result.get("email", ""),
+            "facebookUrl": result.get("facebookUrl", ""),
+            "instagram": result.get("instagram", ""),
+            "twitter": result.get("twitter", ""),
         }
-        keyboard = [[KeyboardButton("Open 24/7")], [KeyboardButton("Custom Hours")]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("Please select the operating hours:", reply_markup=reply_markup)
-        return HOURS
+        try:
+            logger.info(
+                "contact structured stored",
+                extra=build_log_extra(update, context, module_name="new_place", operation="contact_handler", contact=context.user_data["contact"]),
+            )
+        except Exception:
+            logger.info("contact structured stored", extra=build_log_extra(update, context, module_name="new_place", operation="contact_handler"))
+    keyboard = [[KeyboardButton("Open 24/7")], [KeyboardButton("Custom Hours")]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("What are the hours?", reply_markup=reply_markup)
+    return HOURS
 
 
 async def hours_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_choice = update.message.text.strip().lower()
+    try:
+        logger.info(
+            "hours choice received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="hours_handler", choice=user_choice),
+        )
+    except Exception:
+        logger.info("hours choice received", extra=build_log_extra(update, context, module_name="new_place", operation="hours_handler"))
+    if user_choice.startswith("/skip") or user_choice == "skip":
+        context.user_data["hours_api"] = ""
+        # Skip chains, go directly to attributes
+        attributes = [
+            ["ATM 🏧", "Reservations 📅"],
+            ["Delivery 🚚", "Parking 🅿️"],
+            ["Outdoor Seating 🪑", "Restroom 🚻"],
+            ["Credit Cards 💳", "WiFi 📶"],
+            ["Done ✅"],
+        ]
+        reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+        await update.message.reply_text(
+            "Pick any attributes (tap Done when finished).",
+            reply_markup=reply_markup,
+        )
+        return ATTRIBUTES
     if "open 24/7" in user_choice:
-        context.user_data["hours"] = "Open 24/7"
-        keyboard = [[InlineKeyboardButton("Yes", callback_data="chain_yes"), InlineKeyboardButton("No", callback_data="chain_no")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Is this place part of a chain?", reply_markup=reply_markup)
-        return CHAIN_STATUS
+        hours_247 = ";".join([f"{day},0000,2400" for day in range(1, 8)])
+        context.user_data["hours_api"] = hours_247
+        attributes = [
+            ["ATM 🏧", "Reservations 📅"],
+            ["Delivery 🚚", "Parking 🅿️"],
+            ["Outdoor Seating 🪑", "Restroom 🚻"],
+            ["Credit Cards 💳", "WiFi 📶"],
+            ["Done ✅"],
+        ]
+        reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+        await update.message.reply_text(
+            "Pick any attributes (tap Done when finished).",
+            reply_markup=reply_markup,
+        )
+        return ATTRIBUTES
     elif "custom hours" in user_choice:
         await update.message.reply_text(
-            "Please enter the operating hours in your own words. For example:\n"
-            "\"Mon-Sat 9am to 6pm\" or \"M-F 10-2AM\"."
+            "Type the hours in your own words (e.g. Mon-Fri 9am-6pm).",
+            reply_markup=ReplyKeyboardRemove(),
         )
         return CUSTOM_HOURS
 
 
 async def custom_hours_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_text = update.message.text.strip()
-    result = await parse_hours_info_gpt(user_text)
-    if not result["is_valid"]:
-        await update.message.reply_text(
-            "Sorry, we couldn't parse those hours.\n"
-            "Please try again, or type something like \"Mon-Fri 9am to 6pm\"."
+    try:
+        logger.info(
+            "custom hours raw received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="custom_hours_handler", raw=user_text),
         )
-        return CUSTOM_HOURS
+    except Exception:
+        logger.info("custom hours raw received", extra=build_log_extra(update, context, module_name="new_place", operation="custom_hours_handler"))
+    if user_text.lower() in {"/skip", "skip"}:
+        context.user_data["hours_api"] = ""
     else:
-        context.user_data["hours"] = result["normalized_hours"]
-        keyboard = [[InlineKeyboardButton("Yes", callback_data="chain_yes"), InlineKeyboardButton("No", callback_data="chain_no")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Is this place part of a chain?", reply_markup=reply_markup)
-        return CHAIN_STATUS 
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        parsed = await parse_hours_to_api_gpt(user_text)
+        # Log GPT parsed output
+        try:
+            logger.info("gpt parsed hours", extra=build_log_extra(update, context, module_name="new_place", operation="custom_hours_handler", gpt_parsed=parsed))
+        except Exception:
+            logger.info("gpt parsed hours", extra=build_log_extra(update, context, module_name="new_place", operation="custom_hours_handler"))
+        if not parsed["is_valid"] or not parsed["hours"]:
+            await update.message.reply_text(
+                "Couldn't parse those hours. Try again, or /skip."
+            )
+            return CUSTOM_HOURS
+        context.user_data["hours_api"] = parsed["hours"]
+    # Skip chains, go directly to attributes
+    attributes = [
+        ["ATM 🏧", "Reservations 📅"],
+        ["Delivery 🚚", "Parking 🅿️"],
+        ["Outdoor Seating 🪑", "Restroom 🚻"],
+        ["Credit Cards 💳", "WiFi 📶"],
+        ["Done ✅"],
+    ]
+    reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+    await update.message.reply_text("Pick any attributes (tap Done when finished).", reply_markup=reply_markup)
+    return ATTRIBUTES 
 
 
 async def chain_status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Deprecated: chains flow is skipped
     query = update.callback_query
     await query.answer()
-    context.user_data['is_chain'] = query.data == "chain_yes"
     attributes = [
         ["ATM 🏧", "Reservations 📅"],
         ["Delivery 🚚", "Parking 🅿️"],
@@ -588,28 +923,93 @@ async def chain_status_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     ]
     reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
     await query.message.reply_text(
-        "Select all applicable attributes (press Done when finished):",
+        "Pick any attributes (tap Done when finished).",
         reply_markup=reply_markup,
     )
     return ATTRIBUTES
 
 
+async def chain_details_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Deprecated: chains flow is skipped
+    attributes = [
+        ["ATM 🏧", "Reservations 📅"],
+        ["Delivery 🚚", "Parking 🅿️"],
+        ["Outdoor Seating 🪑", "Restroom 🚻"],
+        ["Credit Cards 💳", "WiFi 📶"],
+        ["Done ✅"],
+    ]
+    reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+    await update.message.reply_text(
+        "Pick any attributes (tap Done when finished).",
+        reply_markup=reply_markup,
+    )
+    return ATTRIBUTES
+
+
+_ATTR_MAP = {
+    "ATM 🏧": "atm",
+    "Reservations 📅": "reservation",
+    "Delivery 🚚": "offers_delivery",
+    "Parking 🅿️": "parking",
+    "Outdoor Seating 🪑": "outdoor_seating",
+    "Restroom 🚻": "restroom",
+    "Credit Cards 💳": "credit_cards",
+    "WiFi 📶": "wifi",
+}
+
+
 async def attributes_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.text == "Done ✅":
-        await update.message.reply_text(
-            "Please send photos of the place (up to 3):\n"
-            "1. Storefront/Entrance\n"
-            "2. Interior\n"
-            "3. Special features\n\n"
-            "Send /skip if you don't have photos.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return PHOTOS
+        tokens = []
+        for label in context.user_data.get('attributes', []):
+            mapped = _ATTR_MAP.get(label)
+            if mapped:
+                tokens.append(mapped)
+        context.user_data['attributes_tokens'] = tokens
+        try:
+            logger.info(
+                "attributes finalized",
+                extra=build_log_extra(update, context, module_name="new_place", operation="attributes_handler", attributes_tokens=tokens),
+            )
+        except Exception:
+            logger.info("attributes finalized", extra=build_log_extra(update, context, module_name="new_place", operation="attributes_handler"))
+        keyboard = [[KeyboardButton("Yes"), KeyboardButton("No")]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text("Is it a private place? (Yes/No) or /skip", reply_markup=reply_markup)
+        return PRIVATE_PLACE
 
     if 'attributes' not in context.user_data:
         context.user_data['attributes'] = []
     context.user_data['attributes'].append(update.message.text)
+    try:
+        logger.info(
+            "attribute selected",
+            extra=build_log_extra(update, context, module_name="new_place", operation="attributes_handler", selected_label=update.message.text),
+        )
+    except Exception:
+        logger.info("attribute selected", extra=build_log_extra(update, context, module_name="new_place", operation="attributes_handler"))
     return ATTRIBUTES
+
+
+async def private_place_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip().lower()
+    try:
+        logger.info(
+            "private place input",
+            extra=build_log_extra(update, context, module_name="new_place", operation="private_place_handler", raw=text),
+        )
+    except Exception:
+        logger.info("private place input", extra=build_log_extra(update, context, module_name="new_place", operation="private_place_handler"))
+    if text in {"/skip", "skip"}:
+        context.user_data['is_private'] = None
+    elif text in {"yes", "y"}:
+        context.user_data['is_private'] = True
+    elif text in {"no", "n"}:
+        context.user_data['is_private'] = False
+    else:
+        await update.message.reply_text("Please reply Yes, No, or /skip.")
+        return PRIVATE_PLACE
+    return await confirm_data(update, context)
 
 
 async def photos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -618,6 +1018,13 @@ async def photos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if update.message.photo:
         context.user_data['photos'].append(update.message.photo[-1].file_id)
+        try:
+            logger.info(
+                "photo received",
+                extra=build_log_extra(update, context, module_name="new_place", operation="photos_handler", count=len(context.user_data['photos'])),
+            )
+        except Exception:
+            logger.info("photo received", extra=build_log_extra(update, context, module_name="new_place", operation="photos_handler"))
         if len(context.user_data['photos']) >= 3:
             return await confirm_data(update, context)
         await update.message.reply_text(
@@ -627,6 +1034,13 @@ async def photos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return PHOTOS
 
     if update.message.text == "/skip" or update.message.text == "/done":
+        try:
+            logger.info(
+                "photos stage skipped or done",
+                extra=build_log_extra(update, context, module_name="new_place", operation="photos_handler"),
+            )
+        except Exception:
+            logger.info("photos stage skipped or done", extra=build_log_extra(update, context, module_name="new_place", operation="photos_handler"))
         return await confirm_data(update, context)
 
     return PHOTOS
@@ -634,17 +1048,46 @@ async def photos_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def confirm_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     data = context.user_data
-    confirmation_text = (
-        "📍 Place Summary:\n\n"
-        f"Name: {data.get('name')}\n"
-        f"Category: {data.get('category')}\n"
-        f"Address: {data.get('address')}\n"
-        f"Hours: {data.get('hours')}\n"
-        f"Chain: {'Yes' if data.get('is_chain') else 'No'}\n"
-        f"Attributes: {', '.join(data.get('attributes', []))}\n"
-        f"Photos: {len(data.get('photos', []))} uploaded\n\n"
-        "Is this information correct?"
-    )
+    address_fields = data.get('address_fields', {})
+    contact = data.get('contact', {})
+    attributes_tokens = data.get('attributes_tokens', [])
+
+    try:
+        logger.info(
+            "confirm summary generated",
+            extra=build_log_extra(update, context, module_name="new_place", operation="confirm_data", name=data.get('name', ''), categories=data.get('categories_names', []), has_hours=bool(data.get('hours_api')), is_private=data.get('is_private')),
+        )
+    except Exception:
+        logger.info("confirm summary generated", extra=build_log_extra(update, context, module_name="new_place", operation="confirm_data"))
+
+    lines = [
+        "📍 Place Summary:",
+        f"Name: {data.get('name', '')}",
+    ]
+    if data.get('categories_names'):
+        lines.append("Categories: " + ", ".join(data.get('categories_names')))
+    if address_fields:
+        lines.append(
+            f"Address: {address_fields.get('address', '')}, {address_fields.get('locality', '')} {address_fields.get('region', '')} {address_fields.get('postcode', '')} {address_fields.get('countryCode', '')}".strip()
+        )
+    if contact:
+        c_bits = [
+            contact.get('phone', ''),
+            contact.get('website', ''),
+            contact.get('email', ''),
+            contact.get('instagram', ''),
+            contact.get('facebookUrl', ''),
+            contact.get('twitter', ''),
+        ]
+        lines.append("Contact: " + ", ".join([b for b in c_bits if b]))
+    if data.get('hours_api'):
+        lines.append("Hours: set")
+    if attributes_tokens:
+        lines.append("Attributes: " + ", ".join(attributes_tokens))
+    if data.get('is_private') is not None:
+        lines.append("Private: Yes" if data.get('is_private') else "Private: No")
+
+    confirmation_text = "\n".join(lines + ["", "Is this information correct?"])
     keyboard = [[InlineKeyboardButton("Yes, Submit ✅", callback_data="confirm_yes"), InlineKeyboardButton("No, Edit ✏️", callback_data="confirm_no")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(confirmation_text, reply_markup=reply_markup)
@@ -655,13 +1098,90 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     if query.data == "confirm_yes":
-        await query.message.reply_text(
-            "Perfect! Your place has been added successfully. 🎉\n"
-            "Type /start to add another place.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        # Build params for suggest endpoint
+        data = context.user_data
+        address_fields = data.get('address_fields', {})
+        contact = data.get('contact', {})
+        lat = context.user_data.get('location', {}).get('latitude')
+        lng = context.user_data.get('location', {}).get('longitude')
+
+        params: Dict[str, Any] = {}
+        params['name'] = data.get('name', '')
+        if data.get('categories_ids'):
+            params['categories'] = data.get('categories_ids')
+        if address_fields:
+            for key in ['address', 'locality', 'region', 'postcode', 'countryCode']:
+                if address_fields.get(key):
+                    params[key] = address_fields.get(key)
+        if lat is not None and lng is not None:
+            params['latitude'] = lat
+            params['longitude'] = lng
+        if data.get('is_private') is not None:
+            params['isPrivatePlace'] = data.get('is_private')
+        if contact:
+            if contact.get('phone'):
+                params['tel'] = contact.get('phone')
+            if contact.get('website'):
+                params['website'] = contact.get('website')
+            if contact.get('email'):
+                params['email'] = contact.get('email')
+            if contact.get('facebookUrl'):
+                params['facebookUrl'] = contact.get('facebookUrl')
+            if contact.get('instagram'):
+                params['instagram'] = contact.get('instagram')
+            if contact.get('twitter'):
+                params['twitter'] = contact.get('twitter')
+        if data.get('hours_api'):
+            params['hours'] = data.get('hours_api')
+        if data.get('attributes_tokens'):
+            params['attributes'] = ",".join(data.get('attributes_tokens'))
+        params['dry_run'] = True
+
+        safe_params = _sanitize_suggest_params(params)
+        logger.info("suggest params (sanitized)", extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation", suggest_params=safe_params))
+
+        try:
+            await context.bot.send_chat_action(chat_id=query.message.chat.id, action=ChatAction.TYPING)
+            resp = fsq.suggest_place(safe_params)
+            try:
+                logger.info(
+                    "suggest place success",
+                    extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation"),
+                )
+            except Exception:
+                logger.info("suggest place success", extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation"))
+            await query.message.reply_text(
+                "Your request for a new place has been accepted successfully!\n\nStart a new conversation by typing /start",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        except Exception as e:
+            # Try to log server response if available
+            response_text = ""
+            try:
+                import requests
+                if isinstance(e, requests.HTTPError) and e.response is not None:
+                    response_text = e.response.text
+            except Exception:
+                pass
+            logger.error(
+                "suggest place failed",
+                extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation", error=str(e), response_text=response_text),
+                exc_info=True,
+            )
+            msg = "Your request for a new place could not be processed. Please try again later."
+            await query.message.reply_text(
+                msg,
+                reply_markup=ReplyKeyboardRemove(),
+            )
         return ConversationHandler.END
     else:
+        try:
+            logger.info(
+                "confirmation denied by user",
+                extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation"),
+            )
+        except Exception:
+            logger.info("confirmation denied by user", extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation"))
         await query.message.reply_text(
             "Okay, let's start over. Please type /start again",
             reply_markup=ReplyKeyboardRemove(),
@@ -670,6 +1190,13 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        logger.info(
+            "conversation cancelled by user",
+            extra=build_log_extra(update, context, module_name="conversation", operation="cancel"),
+        )
+    except Exception:
+        logger.info("conversation cancelled by user", extra=build_log_extra(update, context, module_name="conversation", operation="cancel"))
     await update.message.reply_text(
         "Operation cancelled. Type /start to begin again.",
         reply_markup=ReplyKeyboardRemove(),
