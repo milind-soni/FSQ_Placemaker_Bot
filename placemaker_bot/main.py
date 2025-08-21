@@ -23,6 +23,8 @@ from .telegram_handlers import (
     name_handler,
     category_handler,
     address_handler,
+    coordinates_choice_handler,
+    coordinates_manual_handler,
     contact_handler,
     hours_handler,
     custom_hours_handler,
@@ -39,6 +41,8 @@ from .telegram_handlers import (
     NAME,
     CATEGORY,
     ADDRESS,
+    COORDINATES,
+    COORDINATES_MANUAL,
     CONTACT,
     HOURS,
     CUSTOM_HOURS,
@@ -87,6 +91,14 @@ def main() -> None:
             ADDRESS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, address_handler),
                 MessageHandler(skip_cmd, address_handler),
+            ],
+            COORDINATES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, coordinates_choice_handler),
+                MessageHandler(skip_cmd, coordinates_choice_handler),
+            ],
+            COORDINATES_MANUAL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, coordinates_manual_handler),
+                MessageHandler(skip_cmd, coordinates_manual_handler),
             ],
             CONTACT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, contact_handler),

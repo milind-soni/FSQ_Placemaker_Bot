@@ -49,6 +49,8 @@ _CATEGORY_VALID_NAMES: list[str] = list(_CATEGORY_NAME_TO_ID.keys())
     NAME,
     CATEGORY,
     ADDRESS,
+    COORDINATES,
+    COORDINATES_MANUAL,
     CONTACT,
     HOURS,
     CUSTOM_HOURS,
@@ -58,7 +60,7 @@ _CATEGORY_VALID_NAMES: list[str] = list(_CATEGORY_NAME_TO_ID.keys())
     PRIVATE_PLACE,
     PHOTOS,
     CONFIRM,
-) = range(16)
+) = range(18)
 
 
 def _is_valid_categories(value: str) -> bool:
@@ -362,6 +364,30 @@ async def parse_categories_gpt(user_input: str, valid_names: list[str]) -> list[
     return out
 
 
+# --- Coordinates parsing helper ---
+async def parse_coordinates_gpt(user_input: str) -> Dict[str, Any]:
+    user_prompt = f"""
+        Extract latitude and longitude from the input. The user will provide comma-separated values.
+        Return strict JSON with keys: {{"is_valid": <bool>, "latitude": <float or null>, "longitude": <float or null>, "explanation": "<string>"}}.
+        - Accept variations like spaces or labels (e.g., "lat: 12.34, lng: 56.78").
+        - Validate ranges (lat: -90..90, lng: -180..180). If out of range, set is_valid=false.
+
+        Input: {user_input}
+    """
+    completion = llm.client.beta.chat.completions.parse(
+        model="gpt-4.1-nano",
+        messages=[
+            {"role": "system", "content": "You are a parsing assistant."},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    try:
+        msg = json.loads(completion.choices[0].message.content)
+    except Exception:
+        msg = {"is_valid": False, "latitude": None, "longitude": None, "explanation": "Failed to parse"}
+    return msg
+
+
 async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYPE, ask_refine: bool = False) -> int:
     ensure_request_id(update, context)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -394,6 +420,21 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
         data = fsq.search(ll=f"{lat},{lng}", fields=fields, params=request_params)
         results = data.get("results", [])
         log.info("foursquare search response", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", results_count=len(results)))
+        # Log a concise preview of results
+        try:
+            preview = []
+            for p in results[:10]:
+                preview.append({
+                    "id": p.get("fsq_place_id"),
+                    "name": p.get("name"),
+                    "distance": p.get("distance"),
+                    "rating": p.get("rating"),
+                    "price": p.get("price"),
+                    "open_now": (p.get("hours", {}).get("open_now") if isinstance(p.get("hours"), dict) else None),
+                })
+            log.info("foursquare search results preview", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", results_preview=preview))
+        except Exception:
+            log.info("foursquare search results preview", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search"))
 
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
@@ -404,6 +445,11 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                 continue
             try:
                 photo_list = fsq.photos(fsq_id)
+                try:
+                    photos_count = len(photo_list) if isinstance(photo_list, list) else 0
+                    log.info("fsq photos fetched", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", fsq_id=fsq_id, photos_count=photos_count))
+                except Exception:
+                    log.info("fsq photos fetched", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", fsq_id=fsq_id))
                 if isinstance(photo_list, list) and len(photo_list) > 0:
                     photo = photo_list[0]
                     prefix = photo.get("prefix", "")
@@ -417,6 +463,10 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                 else:
                     place["image_url"] = None
             except Exception:
+                try:
+                    log.info("fsq photos fetch failed", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", fsq_id=fsq_id))
+                except Exception:
+                    pass
                 place["image_url"] = None
 
         if not results:
@@ -771,6 +821,104 @@ async def address_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         except Exception:
             logger.info("address structured stored", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
+    # Ask for coordinates preference
+    keyboard = [
+        [KeyboardButton("Use my current location")],
+        [KeyboardButton("Enter coordinates")],
+        [KeyboardButton("Skip")],
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text(
+        "Would you like to provide latitude,longitude? You can enter them manually, use your current location, or /skip.",
+        reply_markup=reply_markup,
+    )
+    return COORDINATES
+
+
+async def coordinates_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text.strip().lower()
+    try:
+        logger.info(
+            "coordinates choice received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_choice_handler", choice=text),
+        )
+    except Exception:
+        logger.info("coordinates choice received", extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_choice_handler"))
+
+    if text in {"use my current location", "use my location"}:
+        context.user_data['coordinates_source'] = 'current'
+        await update.message.reply_text(
+            "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return CONTACT
+    if text in {"enter coordinates", "enter coordinate", "enter"}:
+        await update.message.reply_text(
+            "Please enter latitude,longitude (e.g., 12.9716,77.5946). You can /skip to skip.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return COORDINATES_MANUAL
+    if text in {"skip", "/skip"}:
+        context.user_data['coordinates_source'] = 'skipped'
+        await update.message.reply_text(
+            "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return CONTACT
+
+    await update.message.reply_text("Please choose one of the options or /skip.")
+    return COORDINATES
+
+
+async def coordinates_manual_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_text = update.message.text.strip()
+    try:
+        logger.info(
+            "coordinates raw received",
+            extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_manual_handler", raw=user_text),
+        )
+    except Exception:
+        logger.info("coordinates raw received", extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_manual_handler"))
+
+    if user_text.lower() in {"/skip", "skip"}:
+        context.user_data['coordinates_source'] = 'skipped'
+        await update.message.reply_text(
+            "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return CONTACT
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    parsed = await parse_coordinates_gpt(user_text)
+    try:
+        logger.info(
+            "gpt parsed coordinates",
+            extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_manual_handler", gpt_parsed=parsed),
+        )
+    except Exception:
+        logger.info("gpt parsed coordinates", extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_manual_handler"))
+
+    is_valid = bool(parsed.get("is_valid"))
+    lat = parsed.get("latitude")
+    lng = parsed.get("longitude")
+    if not is_valid or lat is None or lng is None:
+        await update.message.reply_text(
+            "Couldn't parse coordinates. Please try again as latitude,longitude (e.g., 12.9716,77.5946) or /skip.",
+        )
+        return COORDINATES_MANUAL
+    try:
+        lat_f = float(lat)
+        lng_f = float(lng)
+        if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0):
+            raise ValueError("out of range")
+    except Exception:
+        await update.message.reply_text(
+            "Coordinates out of range. Please try again or /skip.",
+        )
+        return COORDINATES_MANUAL
+
+    context.user_data['coordinates_source'] = 'manual'
+    context.user_data['coordinates'] = {'latitude': lat_f, 'longitude': lng_f}
     await update.message.reply_text(
         "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
         reply_markup=ReplyKeyboardRemove(),
@@ -1102,8 +1250,6 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         data = context.user_data
         address_fields = data.get('address_fields', {})
         contact = data.get('contact', {})
-        lat = context.user_data.get('location', {}).get('latitude')
-        lng = context.user_data.get('location', {}).get('longitude')
 
         params: Dict[str, Any] = {}
         params['name'] = data.get('name', '')
@@ -1113,9 +1259,17 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             for key in ['address', 'locality', 'region', 'postcode', 'countryCode']:
                 if address_fields.get(key):
                     params[key] = address_fields.get(key)
-        if lat is not None and lng is not None:
-            params['latitude'] = lat
-            params['longitude'] = lng
+        # Coordinates: only include if user opted in
+        coords_src = data.get('coordinates_source')
+        if coords_src == 'manual' and isinstance(data.get('coordinates'), dict):
+            params['latitude'] = data['coordinates'].get('latitude')
+            params['longitude'] = data['coordinates'].get('longitude')
+        elif coords_src == 'current':
+            lat = context.user_data.get('location', {}).get('latitude')
+            lng = context.user_data.get('location', {}).get('longitude')
+            if lat is not None and lng is not None:
+                params['latitude'] = lat
+                params['longitude'] = lng
         if data.get('is_private') is not None:
             params['isPrivatePlace'] = data.get('is_private')
         if contact:
@@ -1146,12 +1300,12 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             try:
                 logger.info(
                     "suggest place success",
-                    extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation"),
+                    extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation", response=resp),
                 )
             except Exception:
                 logger.info("suggest place success", extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation"))
             await query.message.reply_text(
-                "Your request for a new place has been accepted successfully!\n\nStart a new conversation by typing /start",
+                "Your request for a new place has been accepted successfully!\n\nStart a new conversation by typing\n/start",
                 reply_markup=ReplyKeyboardRemove(),
             )
         except Exception as e:
