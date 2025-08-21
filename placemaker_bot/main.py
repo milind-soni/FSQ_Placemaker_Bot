@@ -23,11 +23,15 @@ from .telegram_handlers import (
     name_handler,
     category_handler,
     address_handler,
+    coordinates_choice_handler,
+    coordinates_manual_handler,
     contact_handler,
     hours_handler,
     custom_hours_handler,
-    chain_status_handler,
+    # chain_status_handler,  # removed from flow
+    # chain_details_handler, # removed from flow
     attributes_handler,
+    private_place_handler,
     photos_handler,
     handle_confirmation,
     LOCATION,
@@ -37,11 +41,15 @@ from .telegram_handlers import (
     NAME,
     CATEGORY,
     ADDRESS,
+    COORDINATES,
+    COORDINATES_MANUAL,
     CONTACT,
     HOURS,
     CUSTOM_HOURS,
     CHAIN_STATUS,
+    CHAIN_DETAILS,
     ATTRIBUTES,
+    PRIVATE_PLACE,
     PHOTOS,
     CONFIRM,
     cancel,
@@ -63,6 +71,8 @@ def main() -> None:
     application = Application.builder().token(settings.telegram_bot_token).build()
     bot = application.bot
 
+    skip_cmd = filters.Regex(r"^/skip$")#, flags=0)
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -74,13 +84,44 @@ def main() -> None:
             QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, query_handler)],
             REFINE: [MessageHandler(filters.TEXT & ~filters.COMMAND, refine_handler)],
             NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name_handler)],
-            CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, category_handler)],
-            ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, address_handler)],
-            CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, contact_handler)],
-            HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, hours_handler)],
-            CUSTOM_HOURS: [MessageHandler(filters.TEXT & ~filters.COMMAND, custom_hours_handler)],
-            CHAIN_STATUS: [CallbackQueryHandler(chain_status_handler)],
+            CATEGORY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, category_handler),
+                MessageHandler(skip_cmd, category_handler),
+            ],
+            ADDRESS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, address_handler),
+                MessageHandler(skip_cmd, address_handler),
+            ],
+            COORDINATES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, coordinates_choice_handler),
+                MessageHandler(skip_cmd, coordinates_choice_handler),
+            ],
+            COORDINATES_MANUAL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, coordinates_manual_handler),
+                MessageHandler(skip_cmd, coordinates_manual_handler),
+            ],
+            CONTACT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, contact_handler),
+                MessageHandler(skip_cmd, contact_handler),
+            ],
+            HOURS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, hours_handler),
+                MessageHandler(skip_cmd, hours_handler),
+            ],
+            CUSTOM_HOURS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, custom_hours_handler),
+                MessageHandler(skip_cmd, custom_hours_handler),
+            ],
+            # CHAIN_STATUS: [CallbackQueryHandler(chain_status_handler)],  # removed
+            # CHAIN_DETAILS: [
+            #     MessageHandler(filters.TEXT & ~filters.COMMAND, chain_details_handler),
+            #     MessageHandler(skip_cmd, chain_details_handler),
+            # ],
             ATTRIBUTES: [MessageHandler(filters.TEXT & ~filters.COMMAND, attributes_handler)],
+            PRIVATE_PLACE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, private_place_handler),
+                MessageHandler(skip_cmd, private_place_handler),
+            ],
             PHOTOS: [
                 MessageHandler(filters.PHOTO, photos_handler),
                 CommandHandler("skip", photos_handler),

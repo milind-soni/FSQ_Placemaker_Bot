@@ -16,6 +16,19 @@ class FoursquareSearchParams(BaseModel):
 class UserInputClassifier(BaseModel):
     is_valid: bool = Field(description="Checks if the overall user_input is correct or not")
     phone: str = Field(description="The phone number extracted from user input")
-    website: str = Field(description="The wesbite extracted from user input")
-    email: str = Field(description="The website extracted from user input")
-    explation: str = Field(description="The explanation for the response that you provide") 
+    website: str = Field(description="The website extracted from user input")
+    email: str = Field(description="The email extracted from user input")
+    facebookUrl: str = Field(default="", description="Facebook page URL if provided")
+    instagram: str = Field(default="", description="Instagram handle or URL if provided")
+    twitter: str = Field(default="", description="Twitter/X handle or URL if provided")
+    explanation: str = Field(default="", description="Explanation for the response you provide")
+
+
+class AddressParseResult(BaseModel):
+    is_valid: bool = Field(description="Whether the address could be parsed confidently")
+    address: str = Field(default="", description="Street address or first line")
+    locality: str = Field(default="", description="City or locality")
+    region: str = Field(default="", description="State or province")
+    postcode: str = Field(default="", description="Postal/ZIP code")
+    countryCode: str = Field(default="", description="2-letter country code, e.g. US, IN")
+    explanation: str = Field(default="", description="Short explanation if parsing failed or assumptions made") 
