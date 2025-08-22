@@ -603,13 +603,23 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         extra=build_log_extra(update, context, module_name="conversation", operation="location_handler", latitude=user_location.latitude, longitude=user_location.longitude),
     )
 
+    # Build map URL with user's lat/lon parameters
+    from urllib.parse import urlencode
+    map_params = {
+        'lat': user_location.latitude,
+        'lon': user_location.longitude,
+        'dtype_out_raster': 'png',
+        'dtype_out_vector': 'html'
+    }
+    map_url = f"https://staging.fused.io/server/v1/realtime-shared/fsh_gUEEDC5FXKza2P19Kpizm/run/file?{urlencode(map_params)}"
+
     keyboard = [
         [KeyboardButton("Search Foursquare data")],
         [KeyboardButton("Add a new place")],
         [KeyboardButton(
             text="Explore the foursquare location data",
             web_app=WebAppInfo(
-                url="https://staging.fused.io/server/v1/realtime-shared/fsh_4a9CSIwYe2QZeDbsmExyIJ/run/file?dtype_out_raster=png&dtype_out_vector=csv",
+                url=map_url,
             ),
         )],
     ]
