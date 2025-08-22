@@ -154,8 +154,7 @@ The bot will use long polling; ngrok/webhook is not required.
 2. Use the `/start` command to begin
 3. Share your location or explore the Foursquare data
 4. Follow the guided process to add a new place
-5. Upload photos if available
-6. Confirm the submission
+5. Confirm the submission
 
 ## 🤝 Contributing
 
