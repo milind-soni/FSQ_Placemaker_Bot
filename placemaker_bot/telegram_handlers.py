@@ -1289,7 +1289,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             params['hours'] = data.get('hours_api')
         if data.get('attributes_tokens'):
             params['attributes'] = ",".join(data.get('attributes_tokens'))
-        params['dry_run'] = True
+        params['dry_run'] = False
 
         safe_params = _sanitize_suggest_params(params)
         logger.info("suggest params (sanitized)", extra=build_log_extra(update, context, module_name="new_place", operation="handle_confirmation", suggest_params=safe_params))
