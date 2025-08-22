@@ -100,8 +100,3 @@ docker-compose logs -f placemaker-ngrok | cat
 
 - Switch to polling (no webhook/tunnel):
   - Set `USE_WEBHOOK=false` in `.env` and restart containers
-
-## 📦 Notes
-
-- The legacy nginx/SSL-based setup has been replaced by the ngrok-based flow for simplicity
-- Files like `nginx.conf` and `setup-ssl.sh` are no longer required for this setup 

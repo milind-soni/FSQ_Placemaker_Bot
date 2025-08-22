@@ -4,9 +4,10 @@
 [![Fused](https://img.shields.io/badge/Fused-udf-d1e550)](https://www.fused.io/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-✓-blue.svg)](https://core.telegram.org/bots/api)
 [![Docker](https://img.shields.io/badge/Docker-compatible-blue.svg)](https://www.docker.com/)
+[![LLM Support](https://img.shields.io/badge/LLM-OpenAI%20%7C%20Claude-blue.svg)](https://openai.com/)
 
 
-A production-ready Telegram bot for the Foursquare Placemaker community that enables users to contribute to the global places database directly from their mobile devices. Now with one-command setup using ngrok (no custom domain or SSL required).
+A production-ready Telegram bot for the Foursquare Placemaker community that enables users to contribute to the global places database directly from their mobile devices. Now with one-command setup using ngrok (no custom domain or SSL required) and support for multiple LLM providers.
 
 ## 🌟 About Foursquare Placemakers
 
@@ -33,6 +34,7 @@ The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/)
 - **Foursquare Map Integration**: Explore existing Foursquare location data through an embedded web app
 - **Conversational Interface**: User-friendly keyboard buttons and inline options
 - **Auto-ngrok + Auto-webhook**: Tunnel and webhook are configured automatically by Docker
+- **Multiple LLM Providers**: Support for OpenAI GPT and AWS Bedrock (Claude) models
 
 ## 🚀 Quick Start (ngrok, no SSL)
 
@@ -40,7 +42,7 @@ The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/)
 
 - Docker & Docker Compose
 - A Telegram Bot Token from [@BotFather](https://t.me/botfather)
-- OpenAI API Key
+- OpenAI API Key OR AWS Bedrock access
 - Foursquare API Key
 - ngrok account (to obtain `NGROK_AUTHTOKEN`)
 
@@ -61,13 +63,21 @@ nano .env
 Fill in your configuration:
 ```env
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-OPENAI_KEY=your_openai_api_key_here
 FOURSQUARE_API_KEY=your_foursquare_api_key_here
 NGROK_AUTHTOKEN=your_ngrok_authtoken
 WEBAPP_PORT=8000
 USE_WEBHOOK=true
 WEBHOOK_PATH=/webhook
 AUTO_SET_WEBHOOK=true
+
+# LLM Provider Configuration
+LLM_PROVIDER=openai  # "openai" or "bedrock"
+LLM_CHAT_MODEL=gpt-4.1-nano
+LLM_PARSE_MODEL=gpt-4.1-nano
+OPENAI_KEY=your_openai_api_key_here  # Required if LLM_PROVIDER=openai
+AWS_REGION=us-east-1  # Required if LLM_PROVIDER=bedrock
+AWS_ACCESS_KEY_ID=your_aws_access_key  # Required if LLM_PROVIDER=bedrock
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key  # Required if LLM_PROVIDER=bedrock
 
 # Optional: Structured logging
 APP_ENV=dev
@@ -116,13 +126,19 @@ The bot will use long polling; ngrok/webhook is not required.
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `TELEGRAM_BOT_TOKEN` | Your Telegram bot token from BotFather | - | ✅ |
-| `OPENAI_KEY` | Your OpenAI API key | - | ✅ |
 | `FOURSQUARE_API_KEY` | Your Foursquare API key | - | ✅ |
 | `NGROK_AUTHTOKEN` | ngrok auth token (enables public https URL) | - | ✅ (webhook mode) |
 | `WEBAPP_PORT` | Port for the Flask web server | `8000` | ❌ |
 | `USE_WEBHOOK` | Use webhook mode (true) or polling (false) | `true` | ❌ |
 | `WEBHOOK_PATH` | Path for webhook endpoint | `/webhook` | ❌ |
 | `AUTO_SET_WEBHOOK` | Auto-discover ngrok URL and set webhook | `true` | ❌ |
+| `LLM_PROVIDER` | LLM provider: "openai" or "bedrock" | `openai` | ❌ |
+| `LLM_CHAT_MODEL` | Chat model name for selected provider | `gpt-4.1-nano` | ❌ |
+| `LLM_PARSE_MODEL` | Parse model name for structured outputs | `gpt-4.1-nano` | ❌ |
+| `OPENAI_KEY` | OpenAI API key | - | ✅ if `LLM_PROVIDER=openai` |
+| `AWS_REGION` | AWS region for Bedrock | `us-east-1` | ✅ if `LLM_PROVIDER=bedrock` |
+| `AWS_ACCESS_KEY_ID` | AWS access key for Bedrock | - | ✅ if `LLM_PROVIDER=bedrock` |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key for Bedrock | - | ✅ if `LLM_PROVIDER=bedrock` |
 | `APP_ENV` | Deployment environment name for logs | `dev` | ❌ |
 | `SERVICE_NAME` | Service name added to logs | `conversation_bot` | ❌ |
 | `LOG_LEVEL` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` | ❌ |
@@ -154,20 +170,7 @@ Contributions are welcome! Here's how you can help:
 
 ## 🔄 Workflow
 
-The bot implements a conversation flow with 10 states:
-
-1. LOCATION: User shares their location or accesses the web app
-2. NAME: User enters the name of the place
-3. CATEGORY: User selects or types a category
-4. ADDRESS: User provides the full address
-5. CONTACT: User enters contact information
-6. HOURS: User specifies operating hours
-7. CHAIN_STATUS: User indicates if the place is part of a chain
-8. ATTRIBUTES: User selects applicable attributes
-9. PHOTOS: User uploads photos (optional)
-10. CONFIRM: User reviews and confirms the submission
-
-
+The bot implements a conversation flow with 12+ states (search and add flows).
 
 ## 🐳 Docker Commands
 
@@ -201,4 +204,3 @@ docker-compose down && docker-compose up -d --build
   ```
 
 <p align="center">Made with ❤️ for the Placemaker community</p>
-<p align="center">🚀 ngrok-enabled, one-command setup!</p> 

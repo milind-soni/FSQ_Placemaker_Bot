@@ -36,5 +36,15 @@ class Settings:
     log_rotate_interval: int = int(os.environ.get("LOG_ROTATE_INTERVAL", "1"))
     log_backup_count: int = int(os.environ.get("LOG_BACKUP_COUNT", "7"))
 
+    # LLM configuration
+    llm_provider: str = os.environ.get("LLM_PROVIDER", "openai").lower()
+    llm_chat_model: str = os.environ.get("LLM_CHAT_MODEL", "gpt-4.1-nano")
+    llm_parse_model: str = os.environ.get("LLM_PARSE_MODEL", "gpt-4.1-nano")
+
+    # AWS Bedrock (optional, required if LLM_PROVIDER=bedrock)
+    aws_region: str = os.environ.get("AWS_REGION", "us-east-1")
+    aws_access_key_id: str = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    aws_secret_access_key: str = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+
 
 settings = Settings() 
