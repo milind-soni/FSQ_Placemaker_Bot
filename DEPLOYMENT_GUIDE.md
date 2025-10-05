@@ -26,13 +26,17 @@ nano .env
 Fill in your values:
 ```env
 TELEGRAM_BOT_TOKEN=1234567890:ABCDEF...
-OPENAI_KEY=sk-...
+OPENAI_API_KEY=sk-...
 FOURSQUARE_API_KEY=fsq_...
 NGROK_AUTHTOKEN=your-ngrok-auth-token
 WEBAPP_PORT=8000
 USE_WEBHOOK=true
 WEBHOOK_PATH=/webhook
 AUTO_SET_WEBHOOK=true
+
+# LLM Configuration (using litellm)
+LLM_CHAT_MODEL=gpt-4.1-nano
+LLM_PARSE_MODEL=gpt-4.1-nano
 ```
 
 ### 3) Deploy (one command)

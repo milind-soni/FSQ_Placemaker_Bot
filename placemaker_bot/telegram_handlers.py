@@ -126,7 +126,6 @@ async def parse_search_query_gpt(user_input: str, current_params: dict | None = 
         User input: {user_input}
     """
     parsed = llm.parse(
-        model="gpt-4.1-nano",
         messages=[
             {"role": "system", "content": "You are a parsing assistant."},
             {"role": "user", "content": user_prompt},
@@ -157,7 +156,6 @@ async def suggest_next_filters(params: dict) -> str:
         Keep it short and friendly. Don't use any emojis.
     """
     return llm.chat(
-        model="gpt-4.1-nano",
         temperature=1,
         messages=[
             {"role": "system", "content": "You are a helpful, friendly assistant."},
@@ -176,7 +174,6 @@ async def parse_contact_info_gpt(user_input: str) -> Dict[str, Any]:
         User input: {user_input}
         """
     parsed = llm.parse(
-        model="gpt-4.1-nano",
         messages=[
             {"role": "system", "content": "You are a parsing assistant."},
             {"role": "user", "content": user_prompt},
@@ -215,15 +212,13 @@ async def parse_hours_info_gpt(user_input: str) -> Dict[str, Any]:
 
         Return valid JSON only, with no extra keys or text outside the JSON. Don't start or end the json with ```json etc.
         """
-    # For this prompt we parse normal content to JSON manually, keeping behavior consistent.
-    completion = llm.client.beta.chat.completions.parse(
-        model="gpt-4.1-nano",
+    response = llm.chat(
         messages=[
             {"role": "system", "content": "You are a parsing assistant."},
             {"role": "user", "content": user_prompt},
         ],
     )
-    msg = json.loads(completion.choices[0].message.content)
+    msg = json.loads(response)
     return {
         "is_valid": msg["is_valid"],
         "normalized_hours": msg["normalized_hours"],
@@ -243,14 +238,13 @@ async def parse_hours_to_api_gpt(user_input: str) -> Dict[str, Any]:
 
         Return valid JSON only with keys: {{"is_valid": <bool>, "hours": "<string or empty>", "explanation": "<string>"}}
     """
-    completion = llm.client.beta.chat.completions.parse(
-        model="gpt-4.1-nano",
+    response = llm.chat(
         messages=[
             {"role": "system", "content": "You are a parsing assistant."},
             {"role": "user", "content": user_prompt},
         ],
     )
-    msg = json.loads(completion.choices[0].message.content)
+    msg = json.loads(response)
     return {"is_valid": msg["is_valid"], "hours": msg["hours"], "explanation": msg["explanation"]}
 
 
@@ -267,7 +261,6 @@ async def parse_address_info_gpt(user_input: str) -> AddressParseResult:
         Input: {user_input}
     """
     parsed = llm.parse(
-        model="gpt-4.1-nano",
         messages=[
             {"role": "system", "content": "You are a parsing assistant."},
             {"role": "user", "content": user_prompt},
@@ -297,7 +290,6 @@ async def gpt_suggest_refine_prompt(params: dict) -> str:
         In a natural, conversational way, suggest to the user that they can add any of these missing filters to narrow down the results, or say 'no' to finish. Do not use a robotic or templated tone. Make it sound like a real human would ask in a chat. Keep it short and friendly. Don't use any emojis.
     """
     return llm.chat(
-        model="gpt-4.1-nano",
         temperature=1,
         messages=[
             {"role": "system", "content": "You are a helpful, friendly assistant."},
@@ -321,7 +313,6 @@ async def gpt_generate_results_header(params: dict) -> str:
         If the query is missing, use a generic but still friendly intro. Do not use emojis. Keep it short and engaging.
     """
     return llm.chat(
-        model="gpt-4.1-nano",
         temperature=1,
         messages=[
             {"role": "system", "content": "You are a helpful, friendly assistant."},
@@ -345,7 +336,6 @@ async def parse_categories_gpt(user_input: str, valid_names: list[str]) -> list[
     User input: {user_input}
     """
     raw = llm.chat(
-        model="gpt-4.1-nano",
         temperature=0,
         messages=[
             {"role": "system", "content": "You extract concise keywords and output CSV only."},
@@ -374,15 +364,14 @@ async def parse_coordinates_gpt(user_input: str) -> Dict[str, Any]:
 
         Input: {user_input}
     """
-    completion = llm.client.beta.chat.completions.parse(
-        model="gpt-4.1-nano",
+    response = llm.chat(
         messages=[
             {"role": "system", "content": "You are a parsing assistant."},
             {"role": "user", "content": user_prompt},
         ],
     )
     try:
-        msg = json.loads(completion.choices[0].message.content)
+        msg = json.loads(response)
     except Exception:
         msg = {"is_valid": False, "latitude": None, "longitude": None, "explanation": "Failed to parse"}
     return msg
@@ -546,7 +535,6 @@ async def gpt_refine_intent(user_message: str) -> bool:
     User message: {user_message}
     """
     result = llm.chat(
-        model="gpt-4.1-nano",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that classifies user intent."},
             {"role": "user", "content": prompt},

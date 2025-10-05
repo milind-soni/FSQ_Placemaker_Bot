@@ -14,7 +14,6 @@ def _bool(value: str, default: bool = False) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    openai_api_key: str = os.environ.get("OPENAI_KEY", "")
     telegram_bot_token: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     foursquare_api_key: str = os.environ.get("FOURSQUARE_API_KEY", "")
 
@@ -36,15 +35,15 @@ class Settings:
     log_rotate_interval: int = int(os.environ.get("LOG_ROTATE_INTERVAL", "1"))
     log_backup_count: int = int(os.environ.get("LOG_BACKUP_COUNT", "7"))
 
-    # LLM configuration
-    llm_provider: str = os.environ.get("LLM_PROVIDER", "openai").lower()
+    # LLM configuration (using litellm)
+    # Set the appropriate API key environment variable for your provider:
+    # - OpenAI: OPENAI_API_KEY
+    # - Anthropic: ANTHROPIC_API_KEY  
+    # - Azure: AZURE_API_KEY
+    # - AWS Bedrock: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION_NAME
+    # See https://docs.litellm.ai/docs/providers for full list
     llm_chat_model: str = os.environ.get("LLM_CHAT_MODEL", "gpt-4.1-nano")
     llm_parse_model: str = os.environ.get("LLM_PARSE_MODEL", "gpt-4.1-nano")
 
-    # AWS Bedrock (optional, required if LLM_PROVIDER=bedrock)
-    aws_region: str = os.environ.get("AWS_REGION", "us-east-1")
-    aws_access_key_id: str = os.environ.get("AWS_ACCESS_KEY_ID", "")
-    aws_secret_access_key: str = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 
-
-settings = Settings() 
+settings = Settings()

@@ -4,10 +4,10 @@
 [![Fused](https://img.shields.io/badge/Fused-udf-d1e550)](https://www.fused.io/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-✓-blue.svg)](https://core.telegram.org/bots/api)
 [![Docker](https://img.shields.io/badge/Docker-compatible-blue.svg)](https://www.docker.com/)
-[![LLM Support](https://img.shields.io/badge/LLM-OpenAI%20%7C%20Claude-blue.svg)](https://openai.com/)
+[![LLM Support](https://img.shields.io/badge/LLM-100%2B%20Providers-blue.svg)](https://docs.litellm.ai/docs/providers)
 
 
-A production-ready Telegram bot for the Foursquare Placemaker community that enables users to contribute to the global places database directly from their mobile devices. Now with one-command setup using ngrok (no custom domain or SSL required) and support for multiple LLM providers.
+A production-ready Telegram bot for the Foursquare Placemaker community that enables users to contribute to the global places database directly from their mobile devices. Now with one-command setup using ngrok (no custom domain or SSL required) and support for 100+ LLM providers via litellm.
 
 ## 🌟 About Foursquare Placemakers
 
@@ -34,7 +34,7 @@ The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/)
 - **Foursquare Map Integration**: Explore existing Foursquare location data through an embedded web app
 - **Conversational Interface**: User-friendly keyboard buttons and inline options
 - **Auto-ngrok + Auto-webhook**: Tunnel and webhook are configured automatically by Docker
-- **Multiple LLM Providers**: Support for OpenAI GPT and AWS Bedrock (Claude) models
+- **Universal LLM Support**: Use any of 100+ LLM providers via litellm (OpenAI, Anthropic, Azure, Bedrock, Vertex AI, Cohere, HuggingFace, and more)
 
 ## 🚀 Quick Start (ngrok, no SSL)
 
@@ -42,7 +42,7 @@ The Mini App within the Telegram bot is served by [Fused](https://www.fused.io/)
 
 - Docker & Docker Compose
 - A Telegram Bot Token from [@BotFather](https://t.me/botfather)
-- OpenAI API Key OR AWS Bedrock access
+- An API key for your preferred LLM provider (OpenAI, Anthropic, etc.)
 - Foursquare API Key
 - ngrok account (to obtain `NGROK_AUTHTOKEN`)
 
@@ -62,22 +62,29 @@ nano .env
 
 Fill in your configuration:
 ```env
+# Core API Keys
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 FOURSQUARE_API_KEY=your_foursquare_api_key_here
+
+# Webhook Configuration
 NGROK_AUTHTOKEN=your_ngrok_authtoken
 WEBAPP_PORT=8000
 USE_WEBHOOK=true
 WEBHOOK_PATH=/webhook
 AUTO_SET_WEBHOOK=true
 
-# LLM Provider Configuration
-LLM_PROVIDER=openai  # "openai" or "bedrock"
+# LLM Configuration (using litellm)
+# Default: OpenAI GPT-4.1-nano
 LLM_CHAT_MODEL=gpt-4.1-nano
 LLM_PARSE_MODEL=gpt-4.1-nano
-OPENAI_KEY=your_openai_api_key_here  # Required if LLM_PROVIDER=openai
-AWS_REGION=us-east-1  # Required if LLM_PROVIDER=bedrock
-AWS_ACCESS_KEY_ID=your_aws_access_key  # Required if LLM_PROVIDER=bedrock
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key  # Required if LLM_PROVIDER=bedrock
+OPENAI_API_KEY=your_openai_api_key_here
+
+# To use a different provider (e.g., Anthropic Claude):
+# LLM_CHAT_MODEL=claude-3-5-sonnet-20241022
+# LLM_PARSE_MODEL=claude-3-5-sonnet-20241022
+# ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# See example-env for more provider examples (Azure, Bedrock, Vertex AI, etc.)
 
 # Optional: Structured logging
 APP_ENV=dev
@@ -132,13 +139,17 @@ The bot will use long polling; ngrok/webhook is not required.
 | `USE_WEBHOOK` | Use webhook mode (true) or polling (false) | `true` | ❌ |
 | `WEBHOOK_PATH` | Path for webhook endpoint | `/webhook` | ❌ |
 | `AUTO_SET_WEBHOOK` | Auto-discover ngrok URL and set webhook | `true` | ❌ |
-| `LLM_PROVIDER` | LLM provider: "openai" or "bedrock" | `openai` | ❌ |
-| `LLM_CHAT_MODEL` | Chat model name for selected provider | `gpt-4.1-nano` | ❌ |
-| `LLM_PARSE_MODEL` | Parse model name for structured outputs | `gpt-4.1-nano` | ❌ |
-| `OPENAI_KEY` | OpenAI API key | - | ✅ if `LLM_PROVIDER=openai` |
-| `AWS_REGION` | AWS region for Bedrock | `us-east-1` | ✅ if `LLM_PROVIDER=bedrock` |
-| `AWS_ACCESS_KEY_ID` | AWS access key for Bedrock | - | ✅ if `LLM_PROVIDER=bedrock` |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key for Bedrock | - | ✅ if `LLM_PROVIDER=bedrock` |
+| **LLM Configuration** | **(via litellm - supports 100+ providers)** | | |
+| `LLM_CHAT_MODEL` | Model name for chat (e.g., `gpt-4.1-nano`, `claude-4-5-sonnet`) | `gpt-4.1-nano` | ❌ |
+| `LLM_PARSE_MODEL` | Model name for structured outputs | `gpt-4.1-nano` | ❌ |
+| `OPENAI_API_KEY` | OpenAI API key | - | ✅ (for OpenAI) |
+| `ANTHROPIC_API_KEY` | Anthropic API key | - | ✅ (for Claude) |
+| `AZURE_API_KEY` | Azure OpenAI API key | - | ✅ (for Azure) |
+| `AWS_ACCESS_KEY_ID` | AWS access key | - | ✅ (for Bedrock) |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key | - | ✅ (for Bedrock) |
+| `AWS_REGION_NAME` | AWS region | `us-east-1` | ❌ |
+| | See [litellm docs](https://docs.litellm.ai/docs/providers) for other providers | | |
+| **Logging** | | | |
 | `APP_ENV` | Deployment environment name for logs | `dev` | ❌ |
 | `SERVICE_NAME` | Service name added to logs | `conversation_bot` | ❌ |
 | `LOG_LEVEL` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` | ❌ |

@@ -1,117 +1,151 @@
-from typing import Any, Dict
-from openai import OpenAI
-import boto3
+from typing import Any
 import json
+from litellm import completion
 
 from .config import settings
 
 
 class LLMClient:
+    """
+    Unified LLM client using litellm
+    
+    Configure by setting the appropriate API key environment variable:
+    - OpenAI: OPENAI_API_KEY
+    - Anthropic: ANTHROPIC_API_KEY
+    - Azure: AZURE_API_KEY
+    - AWS Bedrock: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION_NAME
+    - etc.
+    
+    See https://docs.litellm.ai/docs/providers for full provider list.
+    """
+    
     def __init__(self, api_key: str | None = None):
-        self.provider = getattr(settings, 'llm_provider', 'openai').lower()
-        self.chat_model = getattr(settings, 'llm_chat_model', 'gpt-4.1-nano')
-        self.parse_model = getattr(settings, 'llm_parse_model', 'gpt-4.1-nano')
+        self.chat_model = settings.llm_chat_model
+        self.parse_model = settings.llm_parse_model
+        self.api_key = api_key  # Optional override, litellm will use env vars by default
         
-        if self.provider == 'openai':
-            self.client = OpenAI(api_key=api_key or settings.openai_api_key)
-        elif self.provider == 'bedrock':
-            # Initialize AWS Bedrock client
-            self.bedrock_client = boto3.client(
-                'bedrock-runtime',
-                region_name=getattr(settings, 'aws_region', 'us-east-1'),
-                aws_access_key_id=getattr(settings, 'aws_access_key_id', None),
-                aws_secret_access_key=getattr(settings, 'aws_secret_access_key', None),
-            )
-        else:
-            raise ValueError(f"Unsupported LLM provider: {self.provider}")
-
-    def chat(self, *, model: str | None = None, messages: list[dict], temperature: float | None = None) -> str:
+    def chat(
+        self, 
+        *, 
+        model: str | None = None, 
+        messages: list[dict], 
+        temperature: float | None = None
+    ) -> str:
+        """
+        Send a chat completion request.
+        
+        Args:
+            model: Model name (e.g., 'gpt-4.1-nano', 'claude-4-5-sonnet')
+            messages: List of message dicts with 'role' and 'content'
+            temperature: Sampling temperature (0.0 to 2.0)
+            
+        Returns:
+            The text response from the model
+        """
         model = model or self.chat_model
-        if self.provider == 'openai':
-            return self._openai_chat(model, messages, temperature)
-        elif self.provider == 'bedrock':
-            return self._bedrock_chat(model, messages, temperature)
-        else:
-            raise ValueError(f"Unsupported LLM provider: {self.provider}")
-
-    def parse(self, *, model: str | None = None, messages: list[dict], response_format: Any) -> Any:
-        model = model or self.parse_model
-        if self.provider == 'openai':
-            return self._openai_parse(model, messages, response_format)
-        elif self.provider == 'bedrock':
-            raw = self._bedrock_parse(model, messages, response_format)
-            # Try to coerce into the provided Pydantic model class when possible
-            try:
-                # Pydantic v2: model_validate / model_validate_json
-                if hasattr(response_format, 'model_validate'):
-                    if isinstance(raw, str):
-                        return response_format.model_validate_json(raw)
-                    return response_format.model_validate(raw)
-            except Exception:
-                pass
-            return raw
-        else:
-            raise ValueError(f"Unsupported LLM provider: {self.provider}")
-
-    # --- OpenAI ---
-    def _openai_chat(self, model: str, messages: list[dict], temperature: float | None = None) -> str:
-        completion = self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-        )
-        return completion.choices[0].message.content.strip()
-
-    def _openai_parse(self, model: str, messages: list[dict], response_format: Any) -> Any:
-        completion = self.client.beta.chat.completions.parse(
-            model=model,
-            messages=messages,
-            response_format=response_format,
-        )
-        return completion.choices[0].message.parsed
-
-    # --- Bedrock (Claude) ---
-    def _bedrock_chat(self, model: str, messages: list[dict], temperature: float | None = None) -> str:
-        claude_messages = self._convert_to_claude_format(messages)
-        request_body: Dict[str, Any] = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096,
-            "messages": claude_messages,
+        
+        kwargs = {
+            "model": model,
+            "messages": messages,
         }
+        
         if temperature is not None:
-            request_body["temperature"] = float(temperature)
-        response = self.bedrock_client.invoke_model(
-            modelId=model,
-            body=json.dumps(request_body)
-        )
-        response_body = json.loads(response.get('body').read())
-        return response_body['content'][0]['text'].strip()
-
-    def _bedrock_parse(self, model: str, messages: list[dict], response_format: Any) -> Any:
-        # For Bedrock, parse is emulated by returning raw text; caller should expect dict or text.
-        raw = self._bedrock_chat(model=model, messages=messages, temperature=0)
-        # Attempt JSON load for convenience; otherwise return raw text
+            kwargs["temperature"] = temperature
+            
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        
+        response = completion(**kwargs)
+        return response.choices[0].message.content.strip()
+    
+    def parse(
+        self, 
+        *, 
+        model: str | None = None, 
+        messages: list[dict], 
+        response_format: Any
+    ) -> Any:
+        """
+        Send a chat completion request with structured output.
+        
+        Args:
+            model: Model name
+            messages: List of message dicts with 'role' and 'content'
+            response_format: Pydantic model class for structured output
+            
+        Returns:
+            Parsed response as an instance of the response_format class
+        """
+        model = model or self.parse_model
+        
+        # Convert Pydantic model to JSON schema for litellm
+        if hasattr(response_format, 'model_json_schema'):
+            # Pydantic v2
+            schema = response_format.model_json_schema()
+        elif hasattr(response_format, 'schema'):
+            # Pydantic v1
+            schema = response_format.schema()
+        else:
+            raise ValueError(f"response_format must be a Pydantic model, got {type(response_format)}")
+        
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "response_format": {
+                "type": "json_object",
+                "schema": schema
+            },
+        }
+        
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        
         try:
-            cleaned = raw.strip()
-            if cleaned.startswith('```json'):
-                cleaned = cleaned[7:]
-            if cleaned.endswith('```'):
-                cleaned = cleaned[:-3]
-            return json.loads(cleaned)
-        except Exception:
-            return raw
-
-    def _convert_to_claude_format(self, messages: list[dict]) -> list[dict]:
-        claude_messages: list[dict] = []
-        for msg in messages:
-            role = msg.get('role')
-            content = msg.get('content', '')
-            if role == 'system':
-                # Prepend system instruction to first user message
-                if claude_messages and claude_messages[0].get('role') == 'user':
-                    claude_messages[0]['content'] = f"{content}\n\n{claude_messages[0]['content']}"
-                else:
-                    claude_messages.append({'role': 'user', 'content': content})
+            response = completion(**kwargs)
+            content = response.choices[0].message.content.strip()
+            
+            # Parse the JSON response
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                # Try to extract JSON from markdown code blocks
+                if content.startswith('```json'):
+                    content = content[7:]
+                if content.endswith('```'):
+                    content = content[:-3]
+                data = json.loads(content.strip())
+            
+            # Convert to Pydantic model
+            if hasattr(response_format, 'model_validate'):
+                # Pydantic v2
+                return response_format.model_validate(data)
             else:
-                claude_messages.append({'role': role, 'content': content})
-        return claude_messages 
+                # Pydantic v1
+                return response_format.parse_obj(data)
+                
+        except Exception as e:
+            # Fallback: try without strict JSON schema
+            kwargs.pop("response_format", None)
+            
+            # Add instruction to return JSON
+            last_message = messages[-1]
+            if last_message.get('role') == 'user':
+                messages[-1]['content'] = f"{last_message['content']}\n\nPlease respond with valid JSON matching this schema: {json.dumps(schema)}"
+            
+            response = completion(**kwargs)
+            content = response.choices[0].message.content.strip()
+            
+            # Try to parse and validate
+            try:
+                if content.startswith('```json'):
+                    content = content[7:]
+                if content.endswith('```'):
+                    content = content[:-3]
+                data = json.loads(content.strip())
+                
+                if hasattr(response_format, 'model_validate'):
+                    return response_format.model_validate(data)
+                else:
+                    return response_format.parse_obj(data)
+            except Exception:
+                raise ValueError(f"Failed to parse LLM response into {response_format.__name__}: {content}")
