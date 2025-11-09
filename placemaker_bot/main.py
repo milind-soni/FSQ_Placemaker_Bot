@@ -1,5 +1,5 @@
-import threading
 import asyncio
+import threading
 
 from telegram import Update
 from telegram.ext import (
@@ -61,19 +61,34 @@ from .web_server import create_app
 logger = setup_logging()
 
 
-def run_flask_app(flask_app):
-    flask_app.run(host='0.0.0.0', port=settings.webapp_port, debug=False)
+class ConfigurationError(RuntimeError):
+    """Raised when critical configuration is missing."""
 
 
-def main() -> None:
-    global application, bot, loop
+def run_flask_app(flask_app) -> None:
+    """
+    Start the Flask webhook server inside a dedicated daemon thread.
 
-    application = Application.builder().token(settings.telegram_bot_token).build()
-    bot = application.bot
+    The main thread remains free to continue running the asyncio event loop
+    that powers the Telegram application.
+    """
+    flask_app.run(host="0.0.0.0", port=settings.webapp_port, debug=False)
 
-    skip_cmd = filters.Regex(r"^/skip$")#, flags=0)
 
-    conv_handler = ConversationHandler(
+def _validate_required_settings() -> None:
+    missing: list[str] = []
+    if not settings.telegram_bot_token:
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if missing:
+        raise ConfigurationError(
+            "Missing required environment variables: " + ", ".join(sorted(missing))
+        )
+
+
+def _build_conversation_handler() -> ConversationHandler:
+    skip_cmd = filters.Regex(r"^/skip$")
+
+    return ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             LOCATION: [
@@ -131,40 +146,58 @@ def main() -> None:
         },
         fallbacks=[CommandHandler("start", start), CommandHandler("cancel", cancel)],
     )
-    application.add_handler(conv_handler)
+
+
+def main() -> None:
+    """
+    Bootstrap the Placemaker Telegram bot.
+
+    Depending on configuration, the bot runs either in webhook mode (Flask +
+    ngrok) or in long-polling mode for local development.
+    """
+    try:
+        _validate_required_settings()
+    except ConfigurationError as exc:
+        logger.error("Configuration error: %s", exc)
+        raise SystemExit(1) from exc
+
+    application = Application.builder().token(settings.telegram_bot_token).build()
+    application.add_handler(_build_conversation_handler())
 
     if settings.use_webhook:
         logger.info("Starting in webhook mode")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
 
-        flask_app = create_app(application, bot, loop)
+        flask_app = create_app(application, application.bot, event_loop)
         flask_thread = threading.Thread(target=run_flask_app, args=(flask_app,), daemon=True)
         flask_thread.start()
 
-        loop.run_until_complete(application.initialize())
-        loop.run_until_complete(application.start())
+        event_loop.run_until_complete(application.initialize())
+        event_loop.run_until_complete(application.start())
 
         if settings.auto_set_webhook:
             external_base = discover_external_base_url()
             if external_base.startswith("https://"):
                 webhook_url = f"{external_base}{settings.webhook_path}"
-                loop.run_until_complete(bot.set_webhook(url=webhook_url))
+                event_loop.run_until_complete(application.bot.set_webhook(url=webhook_url))
                 logger.info(f"Webhook set to: {webhook_url}")
             else:
                 logger.warning("Could not discover a public https URL; skipping webhook auto-registration.")
         else:
             webhook_url = f"https://{settings.webapp_domain}{settings.webhook_path}"
-            loop.run_until_complete(bot.set_webhook(url=webhook_url))
+            event_loop.run_until_complete(application.bot.set_webhook(url=webhook_url))
             logger.info(f"Webhook set to: {webhook_url}")
 
         try:
-            loop.run_forever()
+            event_loop.run_forever()
         except KeyboardInterrupt:
             logger.info("Shutting down...")
-            loop.run_until_complete(bot.delete_webhook())
-            loop.run_until_complete(application.stop())
-            loop.run_until_complete(application.shutdown())
+        finally:
+            event_loop.run_until_complete(application.bot.delete_webhook())
+            event_loop.run_until_complete(application.stop())
+            event_loop.run_until_complete(application.shutdown())
+            event_loop.close()
     else:
         logger.info("Starting in polling mode")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
