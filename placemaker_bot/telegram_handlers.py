@@ -41,6 +41,23 @@ except Exception:
 _CATEGORY_KEY_LOWER_TO_ID: Dict[str, str] = {k.strip().lower(): v for k, v in _CATEGORY_NAME_TO_ID.items()}
 _CATEGORY_VALID_NAMES: list[str] = list(_CATEGORY_NAME_TO_ID.keys())
 
+_ATTRIBUTES_KEYBOARD_LAYOUT: tuple[tuple[str, ...], ...] = (
+    ("ATM 🏧", "Reservations 📅"),
+    ("Delivery 🚚", "Parking 🅿️"),
+    ("Outdoor Seating 🪑", "Restroom 🚻"),
+    ("Credit Cards 💳", "WiFi 📶"),
+    ("Done ✅",),
+)
+
+
+def _build_attributes_keyboard() -> ReplyKeyboardMarkup:
+    """Return a keyboard markup for selecting place attributes."""
+    return ReplyKeyboardMarkup(
+        [list(row) for row in _ATTRIBUTES_KEYBOARD_LAYOUT],
+        resize_keyboard=True,
+    )
+
+
 (
     LOCATION,
     LOCATION_CHOICE,
@@ -255,8 +272,9 @@ async def parse_address_info_gpt(user_input: str) -> AddressParseResult:
         - locality (city)
         - region (state or province)
         - postcode (postal/zip code)
-        - countryCode (2-letter code like US, IN)
+        - countryCode (2-letter code like US, IN. You can extract the country code from the input if it is present.)
         If you are unsure, leave the field empty. Set is_valid=false only if the input clearly isn't an address.
+        The countryCode is also a mandatory field. If you are unable to extract the country code, set is_valid=false.
 
         Input: {user_input}
     """
@@ -381,9 +399,27 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
     ensure_request_id(update, context)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
+    location = context.user_data.get("location")
+    if not isinstance(location, dict):
+        logger.warning(
+            "foursquare search attempted without location",
+            extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search"),
+        )
+        await update.message.reply_text("Please share your location first by sending /start.")
+        return LOCATION
+
+    try:
+        lat = float(location.get("latitude"))
+        lng = float(location.get("longitude"))
+    except (TypeError, ValueError):
+        logger.warning(
+            "invalid location stored for user",
+            extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", location=location),
+        )
+        await update.message.reply_text("Your location looks invalid. Please share it again with /start.")
+        return LOCATION
+
     search_params: dict = context.user_data.get("search_params", {})
-    lat = context.user_data['location']['latitude']
-    lng = context.user_data['location']['longitude']
     fields = "fsq_place_id,name,distance,hours,price,rating"
 
     request_params: Dict[str, Any] = {}
@@ -401,14 +437,31 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
     if search_params.get("max_price"):
         request_params["max_price"] = search_params["max_price"]
 
-    from .logging import setup_logging
-    log = setup_logging()
-    log.info("foursquare search request", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", request_params={k: v for k, v in request_params.items() if k != 'll'}))
+    logger.info(
+        "foursquare search request",
+        extra=build_log_extra(
+            update,
+            context,
+            module_name="search",
+            operation="do_foursquare_search",
+            request_params=request_params,
+            coordinates={"latitude": lat, "longitude": lng},
+        ),
+    )
 
     try:
         data = fsq.search(ll=f"{lat},{lng}", fields=fields, params=request_params)
         results = data.get("results", [])
-        log.info("foursquare search response", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", results_count=len(results)))
+        logger.info(
+            "foursquare search response",
+            extra=build_log_extra(
+                update,
+                context,
+                module_name="search",
+                operation="do_foursquare_search",
+                results_count=len(results),
+            ),
+        )
         # Log a concise preview of results
         try:
             preview = []
@@ -421,9 +474,21 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                     "price": p.get("price"),
                     "open_now": (p.get("hours", {}).get("open_now") if isinstance(p.get("hours"), dict) else None),
                 })
-            log.info("foursquare search results preview", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", results_preview=preview))
+            logger.info(
+                "foursquare search results preview",
+                extra=build_log_extra(
+                    update,
+                    context,
+                    module_name="search",
+                    operation="do_foursquare_search",
+                    results_preview=preview,
+                ),
+            )
         except Exception:
-            log.info("foursquare search results preview", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search"))
+            logger.info(
+                "foursquare search results preview",
+                extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search"),
+            )
 
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
@@ -436,9 +501,28 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                 photo_list = fsq.photos(fsq_id)
                 try:
                     photos_count = len(photo_list) if isinstance(photo_list, list) else 0
-                    log.info("fsq photos fetched", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", fsq_id=fsq_id, photos_count=photos_count))
+                    logger.info(
+                        "fsq photos fetched",
+                        extra=build_log_extra(
+                            update,
+                            context,
+                            module_name="search",
+                            operation="do_foursquare_search",
+                            fsq_id=fsq_id,
+                            photos_count=photos_count,
+                        ),
+                    )
                 except Exception:
-                    log.info("fsq photos fetched", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", fsq_id=fsq_id))
+                    logger.info(
+                        "fsq photos fetched",
+                        extra=build_log_extra(
+                            update,
+                            context,
+                            module_name="search",
+                            operation="do_foursquare_search",
+                            fsq_id=fsq_id,
+                        ),
+                    )
                 if isinstance(photo_list, list) and len(photo_list) > 0:
                     photo = photo_list[0]
                     prefix = photo.get("prefix", "")
@@ -453,7 +537,16 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
                     place["image_url"] = None
             except Exception:
                 try:
-                    log.info("fsq photos fetch failed", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search", fsq_id=fsq_id))
+                    logger.info(
+                        "fsq photos fetch failed",
+                        extra=build_log_extra(
+                            update,
+                            context,
+                            module_name="search",
+                            operation="do_foursquare_search",
+                            fsq_id=fsq_id,
+                        ),
+                    )
                 except Exception:
                     pass
                 place["image_url"] = None
@@ -461,65 +554,68 @@ async def do_foursquare_search(update: Update, context: ContextTypes.DEFAULT_TYP
         if not results:
             await update.message.reply_text("No places found with your filters. Type a new query or /start to try again.")
             return QUERY
-        else:
-            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-            header = await gpt_generate_results_header(search_params)
-            lines: list[str] = []
-            for place in results:
-                name = place.get("name", "Unknown")
-                dist = place.get("distance", "N/A")
-                rating = place.get("rating", None)
-                if rating is not None and rating != "":
-                    rating_str = f"{rating}/10 ⭐"
-                else:
-                    rating_str = "N/A"
-                price = place.get("price", None)
-                if price is not None and price != "":
-                    try:
-                        price_int = int(price)
-                        price_str = f"<b>{'$' * price_int}</b>"
-                    except Exception:
-                        price_str = "N/A"
-                else:
-                    price_str = "N/A"
-                open_now = place.get("hours", {}).get("open_now", None)
-                if open_now is True:
-                    open_str = "<b>Open Now</b>"
-                elif open_now is False:
-                    open_str = "<b>Currently Closed!</b>"
-                else:
-                    open_str = "N/A"
-                place_msg = (
-                    f"<b>{name}</b>\n"
-                    f"Rating: {rating_str}\n"
-                    f"Pricing: {price_str}\n"
-                    f"Status: {open_str}\n"
-                    f"Distance: {dist}m away"
-                )
-                lines.append(place_msg)
-            reply = header + "\n\n" + "\n\n".join(lines)
-            await update.message.reply_text(reply, parse_mode="HTML")
 
-            places_json = json.dumps(results)
-            places_b64 = base64.urlsafe_b64encode(places_json.encode()).decode()
-            external_base = discover_external_base_url(max_wait_seconds=1)
-            webapp_url = f"{external_base}/?data={places_b64}"
-            keyboard = [[InlineKeyboardButton("Open List View", url=webapp_url)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "Want to see these results in a beautiful list view? Tap below!",
-                reply_markup=reply_markup,
-            )
-
-            if ask_refine:
-                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-                refine_prompt = await gpt_suggest_refine_prompt(search_params)
-                await update.message.reply_text(refine_prompt)
-                return REFINE
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        header = await gpt_generate_results_header(search_params)
+        lines: list[str] = []
+        for place in results:
+            name = place.get("name", "Unknown")
+            dist = place.get("distance", "N/A")
+            rating = place.get("rating", None)
+            if rating is not None and rating != "":
+                rating_str = f"{rating}/10 ⭐"
             else:
-                return QUERY
+                rating_str = "N/A"
+            price = place.get("price", None)
+            if price is not None and price != "":
+                try:
+                    price_int = int(price)
+                    price_str = f"<b>{'$' * price_int}</b>"
+                except Exception:
+                    price_str = "N/A"
+            else:
+                price_str = "N/A"
+            open_now = place.get("hours", {}).get("open_now", None)
+            if open_now is True:
+                open_str = "<b>Open Now</b>"
+            elif open_now is False:
+                open_str = "<b>Currently Closed!</b>"
+            else:
+                open_str = "N/A"
+            place_msg = (
+                f"<b>{name}</b>\n"
+                f"Rating: {rating_str}\n"
+                f"Pricing: {price_str}\n"
+                f"Status: {open_str}\n"
+                f"Distance: {dist}m away"
+            )
+            lines.append(place_msg)
+        reply = header + "\n\n" + "\n\n".join(lines)
+        await update.message.reply_text(reply, parse_mode="HTML")
+
+        places_json = json.dumps(results)
+        places_b64 = base64.urlsafe_b64encode(places_json.encode()).decode()
+        external_base = discover_external_base_url(max_wait_seconds=1)
+        webapp_url = f"{external_base}/?data={places_b64}"
+        keyboard = [[InlineKeyboardButton("Open List View", url=webapp_url)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "Want to see these results in a beautiful list view? Tap below!",
+            reply_markup=reply_markup,
+        )
+
+        if ask_refine:
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+            refine_prompt = await gpt_suggest_refine_prompt(search_params)
+            await update.message.reply_text(refine_prompt)
+            return REFINE
+        return QUERY
     except Exception as e:
-        log.error("foursquare search failed", extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search"), exc_info=True)
+        logger.error(
+            "foursquare search failed",
+            extra=build_log_extra(update, context, module_name="search", operation="do_foursquare_search"),
+            exc_info=True,
+        )
         await update.message.reply_text(f"Error: {e}")
         return QUERY
 
@@ -723,7 +819,10 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if text.lower().startswith("/skip") or text.lower() == "skip":
         context.user_data['categories_ids'] = ""
         context.user_data['categories_names'] = []
-        await update.message.reply_text("What's the address? Paste it as you would normally (/skip to skip)", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(
+            "What's the address? Please paste the full address, including the country code.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return ADDRESS
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -776,7 +875,10 @@ async def category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data['categories_ids'] = ",".join(mapped_ids)
     context.user_data['categories_names'] = accepted_names
 
-    await update.message.reply_text("What's the address? Paste it as you would normally (/skip to skip)", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text(
+        "What's the address? Please paste the full address, including the country code.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
     return ADDRESS
 
 
@@ -789,45 +891,49 @@ async def address_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     except Exception:
         logger.info("address raw received", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
-    if user_text.lower().startswith("/skip") or user_text.lower() == "skip":
-        context.user_data['address_fields'] = {}
-    else:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        parsed = await parse_address_info_gpt(user_text)
-        # Log GPT parsed output
-        try:
-            logger.info("gpt parsed address", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler", gpt_parsed=parsed.model_dump()))
-        except Exception:
-            logger.info("gpt parsed address", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
-        if not parsed.is_valid:
-            await update.message.reply_text(
-                "Hmm, that didn't look like an address. Try again, or /skip.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return ADDRESS
-        context.user_data['address_fields'] = {
-            'address': parsed.address,
-            'locality': parsed.locality,
-            'region': parsed.region,
-            'postcode': parsed.postcode,
-            'countryCode': parsed.countryCode,
-        }
-        try:
-            logger.info(
-                "address structured stored",
-                extra=build_log_extra(update, context, module_name="new_place", operation="address_handler", address_fields=context.user_data['address_fields']),
-            )
-        except Exception:
-            logger.info("address structured stored", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
+    lowered = user_text.lower()
+    if not user_text or lowered.startswith("/skip") or lowered == "skip":
+        await update.message.reply_text(
+            "An address is required to add a new place. Please provide the full address, including the country code.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ADDRESS
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    parsed = await parse_address_info_gpt(user_text)
+    # Log GPT parsed output
+    try:
+        logger.info("gpt parsed address", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler", gpt_parsed=parsed.model_dump()))
+    except Exception:
+        logger.info("gpt parsed address", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
+    if not parsed.is_valid:
+        await update.message.reply_text(
+            "Hmm, that didn't look like a valid address. Please try again with the full address, including the country code.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ADDRESS
+    context.user_data['address_fields'] = {
+        'address': parsed.address,
+        'locality': parsed.locality,
+        'region': parsed.region,
+        'postcode': parsed.postcode,
+        'countryCode': parsed.countryCode,
+    }
+    try:
+        logger.info(
+            "address structured stored",
+            extra=build_log_extra(update, context, module_name="new_place", operation="address_handler", address_fields=context.user_data['address_fields']),
+        )
+    except Exception:
+        logger.info("address structured stored", extra=build_log_extra(update, context, module_name="new_place", operation="address_handler"))
     # Ask for coordinates preference
     keyboard = [
         [KeyboardButton("Use my current location")],
         [KeyboardButton("Enter coordinates")],
-        [KeyboardButton("Skip")],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Would you like to provide latitude,longitude? You can enter them manually, use your current location, or /skip.",
+        "We also need the coordinates. Share your current location or enter latitude,longitude manually.",
         reply_markup=reply_markup,
     )
     return COORDINATES
@@ -844,7 +950,18 @@ async def coordinates_choice_handler(update: Update, context: ContextTypes.DEFAU
         logger.info("coordinates choice received", extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_choice_handler"))
 
     if text in {"use my current location", "use my location"}:
+        location = context.user_data.get('location', {})
+        if not isinstance(location, dict) or location.get('latitude') is None or location.get('longitude') is None:
+            await update.message.reply_text(
+                "I couldn't find your location. Please enter the coordinates manually (latitude,longitude).",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return COORDINATES_MANUAL
         context.user_data['coordinates_source'] = 'current'
+        context.user_data['coordinates'] = {
+            'latitude': location.get('latitude'),
+            'longitude': location.get('longitude'),
+        }
         await update.message.reply_text(
             "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
             reply_markup=ReplyKeyboardRemove(),
@@ -852,19 +969,24 @@ async def coordinates_choice_handler(update: Update, context: ContextTypes.DEFAU
         return CONTACT
     if text in {"enter coordinates", "enter coordinate", "enter"}:
         await update.message.reply_text(
-            "Please enter latitude,longitude (e.g., 12.9716,77.5946). You can /skip to skip.",
+            "Please enter latitude,longitude (e.g., 12.9716,77.5946).",
             reply_markup=ReplyKeyboardRemove(),
         )
         return COORDINATES_MANUAL
     if text in {"skip", "/skip"}:
-        context.user_data['coordinates_source'] = 'skipped'
         await update.message.reply_text(
-            "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
-            reply_markup=ReplyKeyboardRemove(),
+            "Coordinates are required. Please share your current location or enter latitude,longitude manually.",
+            reply_markup=ReplyKeyboardMarkup(
+                [
+                    [KeyboardButton("Use my current location")],
+                    [KeyboardButton("Enter coordinates")],
+                ],
+                resize_keyboard=True,
+            ),
         )
-        return CONTACT
+        return COORDINATES
 
-    await update.message.reply_text("Please choose one of the options or /skip.")
+    await update.message.reply_text("Please choose one of the options to provide coordinates.")
     return COORDINATES
 
 
@@ -877,15 +999,19 @@ async def coordinates_manual_handler(update: Update, context: ContextTypes.DEFAU
         )
     except Exception:
         logger.info("coordinates raw received", extra=build_log_extra(update, context, module_name="new_place", operation="coordinates_manual_handler"))
-
     if user_text.lower() in {"/skip", "skip"}:
-        context.user_data['coordinates_source'] = 'skipped'
-        await update.message.reply_text(
-            "Any contact or social links? Send anything (phone, website, email, Instagram...) or /skip.",
-            reply_markup=ReplyKeyboardRemove(),
+        choice_keyboard = ReplyKeyboardMarkup(
+            [
+                [KeyboardButton("Use my current location")],
+                [KeyboardButton("Enter coordinates")],
+            ],
+            resize_keyboard=True,
         )
-        return CONTACT
-
+        await update.message.reply_text(
+            "Coordinates are required. Share your current location or enter latitude,longitude manually.",
+            reply_markup=choice_keyboard,
+        )
+        return COORDINATES
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     parsed = await parse_coordinates_gpt(user_text)
     try:
@@ -900,20 +1026,36 @@ async def coordinates_manual_handler(update: Update, context: ContextTypes.DEFAU
     lat = parsed.get("latitude")
     lng = parsed.get("longitude")
     if not is_valid or lat is None or lng is None:
-        await update.message.reply_text(
-            "Couldn't parse coordinates. Please try again as latitude,longitude (e.g., 12.9716,77.5946) or /skip.",
+        choice_keyboard = ReplyKeyboardMarkup(
+            [
+                [KeyboardButton("Use my current location")],
+                [KeyboardButton("Enter coordinates")],
+            ],
+            resize_keyboard=True,
         )
-        return COORDINATES_MANUAL
+        await update.message.reply_text(
+            "Couldn't parse coordinates. Choose an option below or try entering them again as latitude,longitude (e.g., 12.9716,77.5946).",
+            reply_markup=choice_keyboard,
+        )
+        return COORDINATES
     try:
         lat_f = float(lat)
         lng_f = float(lng)
         if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0):
             raise ValueError("out of range")
     except Exception:
-        await update.message.reply_text(
-            "Coordinates out of range. Please try again or /skip.",
+        choice_keyboard = ReplyKeyboardMarkup(
+            [
+                [KeyboardButton("Use my current location")],
+                [KeyboardButton("Enter coordinates")],
+            ],
+            resize_keyboard=True,
         )
-        return COORDINATES_MANUAL
+        await update.message.reply_text(
+            "Coordinates out of range. Choose an option below or try entering them again.",
+            reply_markup=choice_keyboard,
+        )
+        return COORDINATES
 
     context.user_data['coordinates_source'] = 'manual'
     context.user_data['coordinates'] = {'latitude': lat_f, 'longitude': lng_f}
@@ -981,14 +1123,7 @@ async def hours_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if user_choice.startswith("/skip") or user_choice == "skip":
         context.user_data["hours_api"] = ""
         # Skip chains, go directly to attributes
-        attributes = [
-            ["ATM 🏧", "Reservations 📅"],
-            ["Delivery 🚚", "Parking 🅿️"],
-            ["Outdoor Seating 🪑", "Restroom 🚻"],
-            ["Credit Cards 💳", "WiFi 📶"],
-            ["Done ✅"],
-        ]
-        reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+        reply_markup = _build_attributes_keyboard()
         await update.message.reply_text(
             "Pick any attributes (tap Done when finished).",
             reply_markup=reply_markup,
@@ -997,14 +1132,7 @@ async def hours_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if "open 24/7" in user_choice:
         hours_247 = ";".join([f"{day},0000,2400" for day in range(1, 8)])
         context.user_data["hours_api"] = hours_247
-        attributes = [
-            ["ATM 🏧", "Reservations 📅"],
-            ["Delivery 🚚", "Parking 🅿️"],
-            ["Outdoor Seating 🪑", "Restroom 🚻"],
-            ["Credit Cards 💳", "WiFi 📶"],
-            ["Done ✅"],
-        ]
-        reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+        reply_markup = _build_attributes_keyboard()
         await update.message.reply_text(
             "Pick any attributes (tap Done when finished).",
             reply_markup=reply_markup,
@@ -1044,14 +1172,7 @@ async def custom_hours_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return CUSTOM_HOURS
         context.user_data["hours_api"] = parsed["hours"]
     # Skip chains, go directly to attributes
-    attributes = [
-        ["ATM 🏧", "Reservations 📅"],
-        ["Delivery 🚚", "Parking 🅿️"],
-        ["Outdoor Seating 🪑", "Restroom 🚻"],
-        ["Credit Cards 💳", "WiFi 📶"],
-        ["Done ✅"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+    reply_markup = _build_attributes_keyboard()
     await update.message.reply_text("Pick any attributes (tap Done when finished).", reply_markup=reply_markup)
     return ATTRIBUTES 
 
@@ -1060,14 +1181,7 @@ async def chain_status_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     # Deprecated: chains flow is skipped
     query = update.callback_query
     await query.answer()
-    attributes = [
-        ["ATM 🏧", "Reservations 📅"],
-        ["Delivery 🚚", "Parking 🅿️"],
-        ["Outdoor Seating 🪑", "Restroom 🚻"],
-        ["Credit Cards 💳", "WiFi 📶"],
-        ["Done ✅"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+    reply_markup = _build_attributes_keyboard()
     await query.message.reply_text(
         "Pick any attributes (tap Done when finished).",
         reply_markup=reply_markup,
@@ -1077,14 +1191,7 @@ async def chain_status_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def chain_details_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Deprecated: chains flow is skipped
-    attributes = [
-        ["ATM 🏧", "Reservations 📅"],
-        ["Delivery 🚚", "Parking 🅿️"],
-        ["Outdoor Seating 🪑", "Restroom 🚻"],
-        ["Credit Cards 💳", "WiFi 📶"],
-        ["Done ✅"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(attributes, resize_keyboard=True)
+    reply_markup = _build_attributes_keyboard()
     await update.message.reply_text(
         "Pick any attributes (tap Done when finished).",
         reply_markup=reply_markup,
