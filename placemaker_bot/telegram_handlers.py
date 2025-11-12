@@ -88,7 +88,7 @@ def _is_valid_categories(value: str) -> bool:
 
 def _sanitize_suggest_params(raw: Dict[str, Any]) -> Dict[str, Any]:
     allowed_keys = {
-        'name', 'categories', 'address', 'locality', 'region', 'postcode', 'countryCode',
+        'name', 'categories', 'address', 'locality', 'region', 'postcode', 'country_code',
         'latitude', 'longitude', 'parentId', 'isPrivatePlace', 'tel', 'website',
         'email', 'facebookUrl', 'instagram', 'twitter', 'hours', 'attributes', 'dry_run'
     }
@@ -272,9 +272,9 @@ async def parse_address_info_gpt(user_input: str) -> AddressParseResult:
         - locality (city)
         - region (state or province)
         - postcode (postal/zip code)
-        - countryCode (2-letter code like US, IN. You can extract the country code from the input if it is present.)
+        - country_code (2-letter code like US, IN. You can extract the country code from the input if it is present.)
         If you are unsure, leave the field empty. Set is_valid=false only if the input clearly isn't an address.
-        The countryCode is also a mandatory field. If you are unable to extract the country code, set is_valid=false.
+        The country_code is also a mandatory field. If you are unable to extract the country code, set is_valid=false.
 
         Input: {user_input}
     """
@@ -917,7 +917,7 @@ async def address_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         'locality': parsed.locality,
         'region': parsed.region,
         'postcode': parsed.postcode,
-        'countryCode': parsed.countryCode,
+        'country_code': parsed.country_code,
     }
     try:
         logger.info(
@@ -1321,7 +1321,7 @@ async def confirm_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         lines.append("Categories: " + ", ".join(data.get('categories_names')))
     if address_fields:
         lines.append(
-            f"Address: {address_fields.get('address', '')}, {address_fields.get('locality', '')} {address_fields.get('region', '')} {address_fields.get('postcode', '')} {address_fields.get('countryCode', '')}".strip()
+            f"Address: {address_fields.get('address', '')}, {address_fields.get('locality', '')} {address_fields.get('region', '')} {address_fields.get('postcode', '')} {address_fields.get('country_code', '')}".strip()
         )
     if contact:
         c_bits = [
@@ -1361,7 +1361,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         if data.get('categories_ids'):
             params['categories'] = data.get('categories_ids')
         if address_fields:
-            for key in ['address', 'locality', 'region', 'postcode', 'countryCode']:
+            for key in ['address', 'locality', 'region', 'postcode', 'country_code']:
                 if address_fields.get(key):
                     params[key] = address_fields.get(key)
         # Coordinates: only include if user opted in
