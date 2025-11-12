@@ -30,5 +30,5 @@ class AddressParseResult(BaseModel):
     locality: str = Field(default="", description="City or locality")
     region: str = Field(default="", description="State or province")
     postcode: str = Field(default="", description="Postal/ZIP code")
-    countryCode: str = Field(default="", description="2-letter country code, e.g. US, IN")
+    country_code: str = Field(default="", description="2-letter country code, e.g. US, IN")
     explanation: str = Field(default="", description="Short explanation if parsing failed or assumptions made") 
