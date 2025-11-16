@@ -8,7 +8,7 @@ class FoursquareClient:
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or settings.foursquare_api_key
         self.search_base = "https://places-api.foursquare.com/places/search"
-        self.photo_base = "https://api.foursquare.com/v3/places/{fsq_id}/photos?limit=5"
+        self.photo_base = "https://places-api.foursquare.com/places/{fsq_id}/photos?limit=5"
         self.suggest_base = "https://places-api.foursquare.com/places/suggest/place"
 
     def search(self, *, ll: str, fields: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -23,7 +23,11 @@ class FoursquareClient:
         return resp.json()
 
     def photos(self, fsq_place_id: str) -> List[Dict[str, Any]]:
-        headers = {"accept": "application/json", "Authorization": f"Bearer {self.api_key}"}
+        headers = {
+            "accept": "application/json",
+            "X-Places-Api-Version": "2025-06-17",
+            "Authorization": f"Bearer {self.api_key}",
+        }
         url = self.photo_base.format(fsq_id=fsq_place_id)
         resp = requests.get(url, headers=headers)
         resp.raise_for_status()
